@@ -255,8 +255,7 @@ GitHub Pages 자동 배포를 위해 아래 파일을 추가했습니다.
 - `main` 브랜치에 푸시
 - GitHub Actions에서 `npm ci` 실행
 - `GITHUB_PAGES=true npm run build` 실행
-- `dist` 폴더를 GitHub Pages artifact로 업로드
-- GitHub Pages에 배포
+- `dist` 폴더를 `gh-pages` 브랜치에 게시
 
 배포 주소:
 
@@ -265,3 +264,5 @@ https://joon7jihoo-ctrl.github.io/parkbuddy-webapp/
 ```
 
 Vite는 GitHub Pages 배포 시 `/parkbuddy-webapp/` 경로를 기준으로 asset URL을 생성하도록 설정했습니다. 로컬 개발/일반 로컬 빌드는 기존처럼 `/` 기준으로 동작합니다.
+
+초기 GitHub Pages Actions 배포는 `Configure Pages` 단계에서 실패했습니다. 저장소 Pages 설정이 아직 GitHub Actions 배포 모드로 활성화되지 않은 경우를 피하기 위해, `peaceiris/actions-gh-pages`로 `gh-pages` 브랜치에 정적 파일을 게시하는 방식으로 변경했습니다.
