@@ -143,3 +143,125 @@ git push -u origin main
 ```
 
 원격 저장소 주소는 사용자의 GitHub 계정에서 새 저장소를 만든 뒤 복사해서 넣으면 됩니다.
+
+## 9. 2026-06-01 조편성 고도화 작업
+
+이번 작업 목표:
+
+- 기존 단순 랜덤 조편성을 경기 방식별 조편성으로 확장
+- 개인전과 팀전 구조 분리
+- 실력 균형, 조장 분산, 직전 조 중복 최소화 기준 반영
+- 조편성 로직을 UI 컴포넌트에서 분리
+
+추가 파일:
+
+- `src/services/teamAssignment.js`
+
+주요 함수:
+
+- `calculateSkillScore(member, stats)`
+- `createBalancedIndividualTeams(participants, options)`
+- `createFoursomeTeams(participants, options)`
+- `createFourBallTeams(participants, options)`
+- `calculatePreviousOverlapScore(candidateTeams, previousRoundTeams)`
+- `selectBestTeamAssignment(candidates)`
+
+실력 점수 기준:
+
+- 평균 타수 점수: 50%
+- 참가 횟수 점수: 30%
+- 실력 등급 점수: 20%
+
+평균 타수는 낮을수록 높은 실력으로 보고, 참가 횟수는 많을수록 경험이 높은 것으로 봅니다. 기존 회원에 평균 타수와 참가 횟수가 없어도 오류가 나지 않도록 기본값을 적용합니다.
+
+개인전 처리:
+
+- 스트로크 플레이
+- 신페리오
+- 매치 플레이
+
+개인전은 실력 점수 높은 순서로 정렬한 뒤 지그재그 방식으로 조에 배치합니다. 직전 조 중복 최소화 옵션을 선택하면 여러 후보 조편성을 만들고, 조별 실력 편차와 직전 조 중복, 조장 후보 분포를 평가해 가장 나은 후보를 선택합니다.
+
+팀전 처리:
+
+- 포섬
+- 포볼
+
+포섬은 비슷한 실력끼리 2인 팀을 만들고, 포볼은 강자와 약자를 짝지어 2인 팀을 만듭니다. 이후 2개 팀을 하나의 조로 배치합니다.
+
+UI 변경:
+
+- 참가자 선택 화면에 조편성 방식 선택 카드 추가
+- 개인전은 랜덤, 실력 균형, 조장 기준, 실력 균형 + 직전 조 중복 최소화 제공
+- 포섬/포볼은 포섬 추천 팀 편성, 포볼 추천 팀 편성, 실력 균형 + 직전 조 중복 최소화 제공
+- 조편성 결과 화면에서 개인전 조와 팀전 조 표시를 구분
+
+기록 변경:
+
+- 라운딩 기록 저장 시 조편성 방식과 조/팀 구조도 함께 저장
+- 다음 라운딩 조편성 시 가장 최근의 저장된 조 정보를 이용해 직전 조 중복을 줄임
+
+## 10. 2026-06-01 화면 캡처 검증
+
+사용자 요청에 따라 주요 화면 흐름별 스크린샷을 `C:\Capture` 폴더에 생성하고 확인했습니다.
+
+생성된 캡처:
+
+- `01-home.png`
+- `02-members.png`
+- `03-round-create-stroke.png`
+- `04-member-select-stroke.png`
+- `05-team-result-individual.png`
+- `06-score-input.png`
+- `07-ranking.png`
+- `08-records.png`
+- `09-round-create-포섬.png`
+- `09-member-select-포섬.png`
+- `09-team-result-포섬.png`
+- `12-round-create-포볼.png`
+- `12-member-select-포볼.png`
+- `12-team-result-포볼.png`
+
+검증 중 발견하고 수정한 내용:
+
+1. 라운딩 생성 기본 날짜가 UTC 기준으로 잡혀 한국 시간보다 하루 이전 날짜가 표시되는 문제를 수정했습니다.
+   - `new Date().toISOString().slice(0, 10)` 대신 `Asia/Seoul` 기준 날짜 문자열을 사용합니다.
+
+2. 점수 입력 화면에서 하단 버튼 영역이 점수 입력 카드 위에 겹쳐 보이는 문제를 수정했습니다.
+   - `.bottom-actions`의 sticky 고정을 제거해 입력 필드를 덮지 않도록 했습니다.
+
+3. 반복 검증을 위해 `dev/capture-flow.mjs`를 추가했습니다.
+   - Vite 서버와 Chrome headless를 실행합니다.
+   - 홈, 회원관리, 라운딩 생성, 참가자 선택, 조편성 결과, 점수 입력, 순위표, 기록 보기, 포섬/포볼 팀전 결과 화면을 자동 캡처합니다.
+   - 캡처 파일은 `C:\Capture`에 저장하고 임시 Chrome 프로필은 실행 후 정리합니다.
+
+검증 결과:
+
+- 개인전 조편성 결과 표시 정상
+- 포섬 팀전 결과 표시 정상
+- 포볼 팀전 결과 표시 정상
+- 날짜 표시 정상
+- 점수 입력 화면 버튼 겹침 해소
+
+## 11. 2026-06-01 배포 설정
+
+GitHub Pages 자동 배포를 위해 아래 파일을 추가했습니다.
+
+- `.github/workflows/deploy.yml`
+- `vite.config.js`
+
+배포 방식:
+
+- `main` 브랜치에 푸시
+- GitHub Actions에서 `npm ci` 실행
+- `GITHUB_PAGES=true npm run build` 실행
+- `dist` 폴더를 GitHub Pages artifact로 업로드
+- GitHub Pages에 배포
+
+배포 주소:
+
+```text
+https://joon7jihoo-ctrl.github.io/parkbuddy-webapp/
+```
+
+Vite는 GitHub Pages 배포 시 `/parkbuddy-webapp/` 경로를 기준으로 asset URL을 생성하도록 설정했습니다. 로컬 개발/일반 로컬 빌드는 기존처럼 `/` 기준으로 동작합니다.

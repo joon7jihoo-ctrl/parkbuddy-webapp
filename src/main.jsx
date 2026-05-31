@@ -1,12 +1,29 @@
 import React, { useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Plus, Users, Trophy, ClipboardList, Download, Upload, Home, MapPin, CalendarDays, Shuffle, Save } from 'lucide-react';
+import { Plus, Users, Trophy, ClipboardList, Download, Upload, Home, CalendarDays, Shuffle, Save } from 'lucide-react';
+import {
+  TEAM_ASSIGNMENT_MODES,
+  buildMemberStatsFromRecords,
+  createTeamAssignment,
+  isTeamMatchMethod
+} from './services/teamAssignment.js';
 import './styles.css';
 
 const GENDERS = ['남성', '여성'];
 const SKILL_LEVELS = ['초급', '중급', '상급', '최상급'];
 const HOLE_OPTIONS = [9, 18, 27, 36];
 const GAME_METHODS = ['스트로크 플레이', '신페리오', '매치 플레이', '포섬', '포볼'];
+const INDIVIDUAL_ASSIGNMENT_OPTIONS = [
+  { value: TEAM_ASSIGNMENT_MODES.BALANCED, label: '실력 균형', description: '실력 점수를 기준으로 조를 고르게 나눕니다.' },
+  { value: TEAM_ASSIGNMENT_MODES.BALANCED_OVERLAP, label: '실력 균형 + 중복 최소화', description: '직전 라운딩에서 만난 사람을 가능한 줄입니다.' },
+  { value: TEAM_ASSIGNMENT_MODES.LEADER, label: '조장 기준', description: '조장 후보를 각 조에 먼저 배치합니다.' },
+  { value: TEAM_ASSIGNMENT_MODES.RANDOM, label: '랜덤', description: '참가자를 무작위로 섞습니다.' }
+];
+const TEAM_ASSIGNMENT_OPTIONS = [
+  { value: TEAM_ASSIGNMENT_MODES.FOURSOME, label: '포섬 추천 팀 편성', description: '비슷한 실력끼리 2인 팀을 만듭니다.' },
+  { value: TEAM_ASSIGNMENT_MODES.FOURBALL, label: '포볼 추천 팀 편성', description: '강자와 약자를 짝지어 팀 전력을 맞춥니다.' },
+  { value: TEAM_ASSIGNMENT_MODES.TEAM_OVERLAP, label: '실력 균형 + 중복 최소화', description: '팀 실력과 직전 조 중복을 함께 봅니다.' }
+];
 const PROVINCES = [
   '서울특별시', '부산광역시', '대구광역시', '인천광역시', '광주광역시', '대전광역시', '울산광역시',
   '세종특별자치시', '경기도', '강원특별자치도', '충청북도', '충청남도', '전북특별자치도',
@@ -41,11 +58,42 @@ const SAMPLE_CSV = `이름,성별,연락처,실력등급,핸디캡,조장후보
 정루키,여성,01011110005,초급,15,아니오`;
 
 const initialMembers = [
-  { id: crypto.randomUUID(), name: '김회장', gender: '남성', phone: '010-1111-0001', skillLevel: '최상급', handicap: 2, isLeaderCandidate: true },
-  { id: crypto.randomUUID(), name: '이총무', gender: '여성', phone: '010-1111-0002', skillLevel: '상급', handicap: 4, isLeaderCandidate: true },
-  { id: crypto.randomUUID(), name: '박프로', gender: '남성', phone: '010-1111-0003', skillLevel: '최상급', handicap: 1, isLeaderCandidate: true },
-  { id: crypto.randomUUID(), name: '최시니어', gender: '남성', phone: '010-1111-0004', skillLevel: '중급', handicap: 8, isLeaderCandidate: false }
+  { id: crypto.randomUUID(), name: '김회장', gender: '남성', phone: '010-1111-0001', skillLevel: '최상급', handicap: 2, isLeaderCandidate: true, averageScore: null, participationCount: 0 },
+  { id: crypto.randomUUID(), name: '이총무', gender: '여성', phone: '010-1111-0002', skillLevel: '상급', handicap: 4, isLeaderCandidate: true, averageScore: null, participationCount: 0 },
+  { id: crypto.randomUUID(), name: '박프로', gender: '남성', phone: '010-1111-0003', skillLevel: '최상급', handicap: 1, isLeaderCandidate: true, averageScore: null, participationCount: 0 },
+  { id: crypto.randomUUID(), name: '최시니어', gender: '남성', phone: '010-1111-0004', skillLevel: '중급', handicap: 8, isLeaderCandidate: false, averageScore: null, participationCount: 0 }
 ];
+
+function getAssignmentOptions(method) {
+  return isTeamMatchMethod(method) ? TEAM_ASSIGNMENT_OPTIONS : INDIVIDUAL_ASSIGNMENT_OPTIONS;
+}
+
+function getDefaultAssignmentMode(method) {
+  if (method === '포볼') return TEAM_ASSIGNMENT_MODES.FOURBALL;
+  if (method === '포섬') return TEAM_ASSIGNMENT_MODES.FOURSOME;
+  return TEAM_ASSIGNMENT_MODES.BALANCED;
+}
+
+function getAssignmentModeLabel(mode) {
+  return [...INDIVIDUAL_ASSIGNMENT_OPTIONS, ...TEAM_ASSIGNMENT_OPTIONS].find(option => option.value === mode)?.label || '실력 균형';
+}
+
+function getMemberSkillText(member, memberStats) {
+  const stats = memberStats?.[member.id] || {};
+  const averageScore = member.averageScore ?? stats.averageScore;
+  const participationCount = member.participationCount ?? stats.participationCount ?? 0;
+  const averageText = Number.isFinite(Number(averageScore)) ? `평균 ${Number(averageScore).toFixed(1)}타` : '평균 기록 없음';
+  return `${averageText} · 참가 ${participationCount}회`;
+}
+
+function getTodayDateInputValue() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
+}
 
 function formatPhone(value) {
   const digits = String(value || '').replace(/\D/g, '').slice(0, 11);
@@ -92,8 +140,10 @@ function parseCsv(text) {
       gender,
       phone,
       skillLevel: SKILL_LEVELS.includes(skillRaw) ? skillRaw : '초급',
-      handicap: Number(handicapRaw || 0),
-      isLeaderCandidate: ['예', '네', 'y', 'yes', 'true', '1', 'o', '○'].includes(String(leaderRaw || '').toLowerCase())
+      handicap: Number.isFinite(Number(handicapRaw)) ? Number(handicapRaw) : 0,
+      isLeaderCandidate: ['예', '네', 'y', 'yes', 'true', '1', 'o', '○'].includes(String(leaderRaw || '').toLowerCase()),
+      averageScore: null,
+      participationCount: 0
     });
   });
 
@@ -127,26 +177,6 @@ function calculateRankings(members, scores, method) {
     lastRank = rank;
     return { ...result, rank };
   });
-}
-
-function assignTeams(participants, leaders, teamSize) {
-  const pool = [...participants];
-  const leaderPool = leaders.filter(l => participants.some(p => p.id === l.id));
-  const teamCount = Math.max(1, Math.ceil(participants.length / teamSize));
-  const teams = Array.from({ length: teamCount }, (_, index) => ({ id: crypto.randomUUID(), name: `${index + 1}조`, leader: null, members: [] }));
-
-  leaderPool.slice(0, teamCount).forEach((leader, index) => {
-    teams[index].leader = leader;
-    pool.splice(pool.findIndex(p => p.id === leader.id), 1);
-  });
-
-  let i = 0;
-  pool.sort(() => Math.random() - 0.5).forEach(member => {
-    teams[i % teamCount].members.push(member);
-    i++;
-  });
-
-  return teams;
 }
 
 function Button({ children, onClick, variant = 'primary', disabled = false, icon: Icon }) {
@@ -220,14 +250,17 @@ function MemberScreen({ members, setMembers, setScreen }) {
     if (!form.gender) return setError('필수항목인 성별을 선택해 주세요.');
     if (form.phone.replace(/\D/g, '').length < 10) return setError('연락처는 숫자 10~11자리로 입력해 주세요.');
 
+    const existingMember = members.find(m => m.id === editingId);
     const member = {
       id: editingId || crypto.randomUUID(),
       name: form.name.trim(),
       gender: form.gender,
       phone: formatPhone(form.phone),
       skillLevel: form.skillLevel,
-      handicap: Number(form.handicap || 0),
-      isLeaderCandidate: form.isLeaderCandidate
+      handicap: Number.isFinite(Number(form.handicap)) ? Number(form.handicap) : 0,
+      isLeaderCandidate: form.isLeaderCandidate,
+      averageScore: existingMember?.averageScore ?? null,
+      participationCount: existingMember?.participationCount ?? 0
     };
 
     if (!confirm(editingId ? '회원 정보를 수정할까요?' : '회원을 등록할까요?')) return;
@@ -345,7 +378,7 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces 
   const [province, setProvince] = useState('전라남도');
   const [round, setLocalRound] = useState({
     title: '정기 라운딩',
-    date: new Date().toISOString().slice(0, 10),
+    date: getTodayDateInputValue(),
     place: '장성 파크골프장',
     memo: '',
     holes: 18,
@@ -406,30 +439,70 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces 
   );
 }
 
-function MemberSelectScreen({ setScreen, members, setParticipants, setLeaders, setTeamSize, teamSize, round }) {
+function MemberSelectScreen({
+  setScreen,
+  members,
+  memberStats,
+  setParticipants,
+  setLeaders,
+  setTeamSize,
+  teamSize,
+  round,
+  teamAssignmentMode,
+  setTeamAssignmentMode
+}) {
   const [selected, setSelected] = useState([]);
   const [leaders, setLocalLeaders] = useState([]);
+  const assignmentOptions = useMemo(() => getAssignmentOptions(round?.method), [round?.method]);
+  const defaultAssignmentMode = getDefaultAssignmentMode(round?.method);
+  const selectedAssignmentMode = assignmentOptions.some(option => option.value === teamAssignmentMode)
+    ? teamAssignmentMode
+    : defaultAssignmentMode;
+  const isTeamMatch = isTeamMatchMethod(round?.method);
   const toggle = (id) => setSelected(prev => prev.includes(id) ? prev.filter(v => v !== id) : [...prev, id]);
   const toggleLeader = (id) => setLocalLeaders(prev => prev.includes(id) ? prev.filter(v => v !== id) : [...prev, id]);
+
+  React.useEffect(() => {
+    if (!assignmentOptions.some(option => option.value === teamAssignmentMode)) {
+      setTeamAssignmentMode(defaultAssignmentMode);
+    }
+  }, [assignmentOptions, defaultAssignmentMode, teamAssignmentMode, setTeamAssignmentMode]);
 
   const next = () => {
     const participants = members.filter(m => selected.includes(m.id));
     if (participants.length < 2) return alert('참가자를 2명 이상 선택해 주세요.');
     setParticipants(participants);
     setLeaders(members.filter(m => leaders.includes(m.id)));
+    setTeamAssignmentMode(selectedAssignmentMode);
     setScreen('teamResult');
   };
 
   return (
     <main className="page">
       <header className="topbar"><h1>참가자 선택</h1><p>{round?.title} · {round?.date} · {round?.place}</p></header>
-      <Card title="조당 인원">
-        <div className="chip-row">{[3,4,5].map(size => <button key={size} className={teamSize === size ? 'chip active' : 'chip'} onClick={() => setTeamSize(size)}>{size}명</button>)}</div>
+      <Card title={isTeamMatch ? '팀전 편성 방식' : '조편성 방식'} subtitle={isTeamMatch ? '2인 팀을 만든 뒤 2개 팀을 한 조로 배치합니다.' : '운영 목적에 맞는 조편성 기준을 고르세요.'}>
+        <div className="option-grid">
+          {assignmentOptions.map(option => (
+            <button
+              key={option.value}
+              className={selectedAssignmentMode === option.value ? 'option-card active' : 'option-card'}
+              onClick={() => setTeamAssignmentMode(option.value)}
+            >
+              <strong>{option.label}</strong>
+              <span>{option.description}</span>
+            </button>
+          ))}
+        </div>
       </Card>
+      {!isTeamMatch && (
+        <Card title="조당 인원">
+          <div className="chip-row">{[3,4,5].map(size => <button key={size} className={teamSize === size ? 'chip active' : 'chip'} onClick={() => setTeamSize(size)}>{size}명</button>)}</div>
+        </Card>
+      )}
       <div className="member-grid">
         {members.map(m => (
           <div key={m.id} className={`select-card ${selected.includes(m.id) ? 'selected' : ''}`}>
-            <button onClick={() => toggle(m.id)}><strong>{m.name}</strong><span>{m.skillLevel} · 핸디 {m.handicap}</span></button>
+            <button onClick={() => toggle(m.id)}><strong>{m.name}</strong><span>{m.skillLevel} · 핸디 {m.handicap}</span><em>{getMemberSkillText(m, memberStats)}</em></button>
             {m.isLeaderCandidate && <button className={leaders.includes(m.id) ? 'leader active' : 'leader'} onClick={() => toggleLeader(m.id)}>조장</button>}
           </div>
         ))}
@@ -442,22 +515,55 @@ function MemberSelectScreen({ setScreen, members, setParticipants, setLeaders, s
   );
 }
 
-function TeamResultScreen({ setScreen, participants, leaders, teamSize, setTeams, teams, round }) {
-  const makeTeams = () => setTeams(assignTeams(participants, leaders, teamSize));
+function TeamResultScreen({
+  setScreen,
+  participants,
+  leaders,
+  teamSize,
+  setTeams,
+  teams,
+  round,
+  assignmentMode,
+  memberStats,
+  previousRoundTeams
+}) {
+  const isTeamMatch = isTeamMatchMethod(round?.method);
+  const makeTeams = () => {
+    setTeams(createTeamAssignment(participants, {
+      method: round?.method,
+      mode: assignmentMode,
+      teamSize,
+      leaders,
+      statsByMember: memberStats,
+      previousRoundTeams
+    }));
+  };
   React.useEffect(() => { if (!teams.length && participants.length) makeTeams(); }, []);
 
   return (
     <main className="page">
-      <header className="topbar"><h1>조편성 결과</h1><p>{round?.title} · {participants.length}명 · {teams.length}개 조</p></header>
+      <header className="topbar"><h1>조편성 결과</h1><p>{round?.title} · {participants.length}명 · {teams.length}개 조 · {getAssignmentModeLabel(assignmentMode)}</p></header>
       <div className="list">
         {teams.map(team => (
-          <Card key={team.id} title={team.name} subtitle={team.leader ? `조장: ${team.leader.name}` : '조장 없음'}>
-            <p>{[team.leader, ...team.members].filter(Boolean).map(m => m.name).join(', ')}</p>
+          <Card key={team.id} title={team.name} subtitle={isTeamMatch ? `팀전 · 평균 실력 ${team.skillAverage}` : `${team.leader ? `조장: ${team.leader.name}` : '조장 없음'} · 평균 실력 ${team.skillAverage}`}>
+            {isTeamMatch ? (
+              <div className="match-team-list">
+                {team.matchTeams.map(matchTeam => (
+                  <div key={matchTeam.id} className="match-team">
+                    <strong>{matchTeam.name}</strong>
+                    <span>{matchTeam.members.map(member => member.name).join(' + ')}</span>
+                    <small>팀 평균 {matchTeam.skillAverage} · 차이 {matchTeam.skillGap}</small>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p>{[team.leader, ...team.members].filter(Boolean).map(m => m.name).join(', ')}</p>
+            )}
           </Card>
         ))}
       </div>
       <div className="bottom-actions">
-        <Button variant="secondary" icon={Shuffle} onClick={makeTeams}>다시 섞기</Button>
+        <Button variant="secondary" icon={Shuffle} onClick={makeTeams}>다시 편성</Button>
         <Button onClick={() => setScreen('scoreInput')}>점수 입력으로 이동</Button>
       </div>
     </main>
@@ -504,16 +610,18 @@ function ScoreInputScreen({ setScreen, participants, round, scores, setScores })
   );
 }
 
-function RankingScreen({ setScreen, participants, scores, round, teams, records, setRecords }) {
+function RankingScreen({ setScreen, participants, scores, round, teams, assignmentMode, records, setRecords }) {
   const rankings = calculateRankings(participants, scores, round.method);
 
   const saveRecord = () => {
     const record = {
       id: crypto.randomUUID(),
       round,
+      assignmentMode,
+      teams,
       participantCount: participants.length,
       teamCount: teams.length,
-      rankings: rankings.slice(0, 10),
+      rankings,
       savedAt: new Date().toLocaleString()
     };
     setRecords([record, ...records]);
@@ -553,7 +661,7 @@ function RecordScreen({ setScreen, records }) {
         <div className="list">
           {records.map(record => (
             <Card key={record.id} title={record.round.title} subtitle={`${record.round.date} · ${record.round.place}`}>
-              <p>{record.round.holes}홀 · {record.round.method} · 참가자 {record.participantCount}명 · {record.teamCount}개 조</p>
+              <p>{record.round.holes}홀 · {record.round.method} · {getAssignmentModeLabel(record.assignmentMode)} · 참가자 {record.participantCount}명 · {record.teamCount}개 조</p>
               <ol className="mini-ranking">
                 {record.rankings.slice(0, 3).map(r => <li key={r.member.id}>{r.rank}위 {r.member.name} — 최종 {r.finalScore.toFixed(1)}</li>)}
               </ol>
@@ -574,13 +682,16 @@ function App() {
   const [leaders, setLeaders] = useState([]);
   const [teamSize, setTeamSize] = useState(4);
   const [teams, setTeams] = useState([]);
+  const [teamAssignmentMode, setTeamAssignmentMode] = useState(null);
   const [scores, setScores] = useState({});
   const [records, setRecords] = useState([]);
   const [recentPlaces, setRecentPlaces] = useState(['장성 파크골프장']);
+  const memberStats = useMemo(() => buildMemberStatsFromRecords(records), [records]);
+  const previousRoundTeams = useMemo(() => records.find(record => record.teams?.length)?.teams || [], [records]);
 
   const navigate = (next) => {
     if (next === 'teamResult') setTeams([]);
-    if (next === 'roundCreate') { setScores({}); setTeams([]); }
+    if (next === 'roundCreate') { setScores({}); setTeams([]); setTeamAssignmentMode(null); }
     setScreen(next);
   };
 
@@ -589,10 +700,10 @@ function App() {
       {screen === 'home' && <HomeScreen setScreen={navigate} members={members} records={records} />}
       {screen === 'members' && <MemberScreen setScreen={navigate} members={members} setMembers={setMembers} />}
       {screen === 'roundCreate' && <RoundCreateScreen setScreen={navigate} setRound={setRound} recentPlaces={recentPlaces} setRecentPlaces={setRecentPlaces} />}
-      {screen === 'memberSelect' && <MemberSelectScreen setScreen={navigate} members={members} setParticipants={setParticipants} setLeaders={setLeaders} setTeamSize={setTeamSize} teamSize={teamSize} round={round} />}
-      {screen === 'teamResult' && <TeamResultScreen setScreen={navigate} participants={participants} leaders={leaders} teamSize={teamSize} teams={teams} setTeams={setTeams} round={round} />}
+      {screen === 'memberSelect' && <MemberSelectScreen setScreen={navigate} members={members} memberStats={memberStats} setParticipants={setParticipants} setLeaders={setLeaders} setTeamSize={setTeamSize} teamSize={teamSize} round={round} teamAssignmentMode={teamAssignmentMode} setTeamAssignmentMode={setTeamAssignmentMode} />}
+      {screen === 'teamResult' && <TeamResultScreen setScreen={navigate} participants={participants} leaders={leaders} teamSize={teamSize} teams={teams} setTeams={setTeams} round={round} assignmentMode={teamAssignmentMode || getDefaultAssignmentMode(round?.method)} memberStats={memberStats} previousRoundTeams={previousRoundTeams} />}
       {screen === 'scoreInput' && <ScoreInputScreen setScreen={navigate} participants={participants} round={round} scores={scores} setScores={setScores} />}
-      {screen === 'ranking' && <RankingScreen setScreen={navigate} participants={participants} scores={scores} round={round} teams={teams} records={records} setRecords={setRecords} />}
+      {screen === 'ranking' && <RankingScreen setScreen={navigate} participants={participants} scores={scores} round={round} teams={teams} assignmentMode={teamAssignmentMode || getDefaultAssignmentMode(round?.method)} records={records} setRecords={setRecords} />}
       {screen === 'records' && <RecordScreen setScreen={navigate} records={records} />}
     </>
   );
