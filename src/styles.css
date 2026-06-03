@@ -46,7 +46,7 @@ button, input, select, textarea { font: inherit; }
 .card-title { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
 .card h2, .card h3 { margin: 0; }
 .card p { color: #5d7162; margin: 6px 0; }
-.stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .stats strong { display: block; font-size: 34px; color: #1e7d3a; }
 .grid.menu { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .btn {
@@ -125,6 +125,18 @@ textarea { resize: vertical; }
   cursor: pointer;
 }
 .chip.active { background: #1e7d3a; color: white; border-color: #1e7d3a; }
+.par-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
+  gap: 10px;
+}
+.par-grid label span {
+  display: block;
+  font-weight: 800;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.par-grid input { text-align: center; }
 .option-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -205,6 +217,7 @@ textarea { resize: vertical; }
   gap: 10px;
 }
 .score-grid label span { display: block; font-weight: 800; font-size: 13px; margin-bottom: 4px; }
+.score-grid label small { color: #6b8170; font-weight: 700; }
 .score-grid input { text-align: center; }
 .ranking-row strong {
   min-width: 64px;

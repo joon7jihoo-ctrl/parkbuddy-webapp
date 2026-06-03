@@ -5,12 +5,14 @@ ParkBuddy Android 앱에서 진행했던 기능을 React 웹앱 형태로 옮긴
 ## 포함 기능
 
 - 회원 등록/수정/삭제
+- 회원별 동호회 이름/직책 관리
 - 연락처 자동 하이픈 처리
 - 필수항목 검사
 - CSV 샘플 다운로드
 - CSV 회원 일괄등록
 - 라운딩 생성
 - 도/광역시 선택 후 파크골프장 선택
+- 라운딩별 홀별 규정타수 입력
 - 참가자 선택
 - 조장 후보 선택
 - 조편성 방식 선택
@@ -18,7 +20,10 @@ ParkBuddy Android 앱에서 진행했던 기능을 React 웹앱 형태로 옮긴
 - 직전 라운딩 같은 조 중복 최소화
 - 포섬/포볼 2인 팀전 편성
 - 홀별 점수 입력
+- 규정타수를 점수 입력 기본값으로 사용
 - 스트로크 플레이 / 신페리오 순위 계산
+- 신페리오 숨김 홀 자동 선정
+- Supabase 기반 회원/기록/최근 장소 자동 저장
 - 라운딩 기록 저장 및 목록 보기
 
 ## 실행 방법
@@ -42,10 +47,30 @@ https://joon7jihoo-ctrl.github.io/parkbuddy-webapp/
 
 ## 현재 저장 방식
 
-이 버전은 MVP 웹앱으로, 데이터를 브라우저 화면 상태에 저장합니다.
-새로고침하면 데이터가 초기화됩니다.
+Supabase 환경변수가 설정되어 있으면 회원, 라운딩 기록, 최근 장소를 Supabase에 자동 저장합니다.
+환경변수가 없으면 기존처럼 브라우저 화면 상태에만 저장되며, 새로고침하면 데이터가 초기화됩니다.
 
-다음 단계에서는 localStorage 또는 Supabase/Firebase 같은 백엔드를 붙여 영구 저장할 수 있습니다.
+## Supabase 설정
+
+1. Supabase 프로젝트를 만듭니다.
+2. Supabase SQL Editor에서 `supabase/schema.sql` 내용을 실행합니다.
+3. `.env.example`을 참고해 `.env`를 만들고 값을 입력합니다.
+
+```text
+VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
+VITE_PARKBUDDY_STATE_KEY=default
+```
+
+현재 스키마는 로그인 전 MVP 저장을 위해 단일 JSON 상태 테이블을 사용합니다. 로그인과 여러 동호회 권한 관리가 들어가면 `clubs`, `members`, `round_records` 같은 정규 테이블과 인증 기반 RLS 정책으로 분리하는 것이 좋습니다.
+
+GitHub Pages 배포에서도 Supabase 저장을 사용하려면 GitHub 저장소의 `Settings > Secrets and variables > Actions`에 아래 secrets를 등록해야 합니다.
+
+```text
+VITE_SUPABASE_URL
+VITE_SUPABASE_ANON_KEY
+VITE_PARKBUDDY_STATE_KEY
+```
 
 ## 조편성 기준
 

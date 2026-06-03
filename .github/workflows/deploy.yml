@@ -33,6 +33,9 @@ jobs:
         run: npm run build
         env:
           GITHUB_PAGES: 'true'
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_PARKBUDDY_STATE_KEY: ${{ secrets.VITE_PARKBUDDY_STATE_KEY }}
 
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v4
