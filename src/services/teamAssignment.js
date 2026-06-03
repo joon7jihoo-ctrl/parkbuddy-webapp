@@ -27,24 +27,26 @@ export function buildMemberStatsFromRecords(records = []) {
 
   records.forEach(record => {
     (record.rankings || []).forEach(result => {
-      const memberId = result.member?.id || result.memberId;
-      if (!memberId) return;
+      getResultMembers(result).forEach(member => {
+        const memberId = member?.id;
+        if (!memberId) return;
 
-      if (!summary[memberId]) {
-        summary[memberId] = {
-          participationCount: 0,
-          scoredRounds: 0,
-          strokeSum: 0
-        };
-      }
+        if (!summary[memberId]) {
+          summary[memberId] = {
+            participationCount: 0,
+            scoredRounds: 0,
+            strokeSum: 0
+          };
+        }
 
-      summary[memberId].participationCount += 1;
+        summary[memberId].participationCount += 1;
 
-      const total = toFiniteNumber(result.total);
-      if (total !== null) {
-        summary[memberId].scoredRounds += 1;
-        summary[memberId].strokeSum += total;
-      }
+        const total = toFiniteNumber(result.total);
+        if (total !== null) {
+          summary[memberId].scoredRounds += 1;
+          summary[memberId].strokeSum += total;
+        }
+      });
     });
   });
 
@@ -208,6 +210,13 @@ function createLeaderBasedIndividualTeams(participants, options = {}) {
   const teamCount = getIndividualTeamCount(participants.length, options.teamSize);
   const memberLists = distributeWithLeaderSeeding(scoredParticipants, teamCount, options, context);
   return createCandidateFromIndividualLists(memberLists, options, context).groups;
+}
+
+function getResultMembers(result) {
+  if (Array.isArray(result?.members) && result.members.length > 0) return result.members;
+  if (result?.member) return [result.member];
+  if (result?.memberId) return [{ id: result.memberId }];
+  return [];
 }
 
 function createIndividualCandidates(participants, options, mode) {

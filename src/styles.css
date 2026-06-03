@@ -46,9 +46,9 @@ button, input, select, textarea { font: inherit; }
 .card-title { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
 .card h2, .card h3 { margin: 0; }
 .card p { color: #5d7162; margin: 6px 0; }
-.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
 .stats strong { display: block; font-size: 34px; color: #1e7d3a; }
-.grid.menu { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.grid.menu { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
 .btn {
   min-height: 52px;
   border: none;
@@ -137,6 +137,35 @@ textarea { resize: vertical; }
   margin-bottom: 4px;
 }
 .par-grid input { text-align: center; }
+.hidden-hole-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
+  gap: 10px;
+}
+.hole-toggle {
+  border: 1px solid #c8dfcd;
+  background: white;
+  border-radius: 16px;
+  padding: 12px 8px;
+  cursor: pointer;
+  min-height: 72px;
+  color: #20472a;
+}
+.hole-toggle strong,
+.hole-toggle span {
+  display: block;
+}
+.hole-toggle span {
+  color: #607b67;
+  font-size: 13px;
+  margin-top: 4px;
+}
+.hole-toggle.active {
+  background: #1e7d3a;
+  border-color: #1e7d3a;
+  color: white;
+}
+.hole-toggle.active span { color: #e9f8ec; }
 .option-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -248,11 +277,46 @@ textarea { resize: vertical; }
   color: #6c7d70;
 }
 .mini-ranking { margin: 10px 0; color: #355c3d; }
+.record-actions { margin-top: 14px; }
+.record-detail {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e1ede3;
+}
+.record-detail small {
+  display: block;
+  color: #667b6b;
+  margin-top: 2px;
+}
+.course-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.course-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #d8e7db;
+  border-radius: 16px;
+  padding: 12px;
+  background: #f8fcf8;
+}
+.course-row strong,
+.course-row small {
+  display: block;
+}
+.course-row small {
+  margin-top: 4px;
+  color: #6c7d70;
+}
 @media (max-width: 720px) {
   .page { padding: 16px; }
   .hero { padding: 26px; border-radius: 24px; }
   .grid.menu, .stats, .form-grid, .member-grid, .menu-box, .option-grid, .match-team-list { grid-template-columns: 1fr; }
   .member-row, .ranking-row { align-items: flex-start; flex-direction: column; }
+  .course-row { align-items: stretch; flex-direction: column; }
   .topbar { align-items: flex-start; }
   .btn { width: 100%; }
   .bottom-actions { flex-direction: column; }

@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Plus, Users, Trophy, ClipboardList, Download, Upload, Home, CalendarDays, Shuffle, Save } from 'lucide-react';
+import { Plus, Users, Trophy, ClipboardList, Download, Upload, Home, CalendarDays, Shuffle, Save, Search, MapPin, Trash2, FileText } from 'lucide-react';
 import {
   TEAM_ASSIGNMENT_MODES,
   buildMemberStatsFromRecords,
   createTeamAssignment,
+  flattenGroupMembers,
   isTeamMatchMethod
 } from './services/teamAssignment.js';
 import { loadParkBuddyState, saveParkBuddyState } from './services/supabaseStorage.js';
@@ -17,7 +18,9 @@ const DEFAULT_CLUB_NAME = '장성 파크골프 동호회';
 const DEFAULT_MEMBER_POSITION = '회원';
 const DEFAULT_HOLE_PAR = 4;
 const HOLE_OPTIONS = [9, 18, 27, 36];
-const GAME_METHODS = ['스트로크 플레이', '신페리오', '매치 플레이', '포섬', '포볼'];
+const GAME_METHODS = ['스트로크 플레이', '신페리오', '매치 플레이', '스크램블', '포섬', '포볼', '스테이블포드'];
+const TEAM_SCORE_METHODS = new Set(['스크램블', '포섬', '포볼']);
+const BACK_COUNT_HOLE_COUNTS = [9, 6, 3, 1];
 const INDIVIDUAL_ASSIGNMENT_OPTIONS = [
   { value: TEAM_ASSIGNMENT_MODES.BALANCED, label: '실력 균형', description: '실력 점수를 기준으로 조를 고르게 나눕니다.' },
   { value: TEAM_ASSIGNMENT_MODES.BALANCED_OVERLAP, label: '실력 균형 + 중복 최소화', description: '직전 라운딩에서 만난 사람을 가능한 줄입니다.' },
@@ -75,6 +78,10 @@ function getAssignmentOptions(method) {
   return isTeamMatchMethod(method) ? TEAM_ASSIGNMENT_OPTIONS : INDIVIDUAL_ASSIGNMENT_OPTIONS;
 }
 
+function isTeamScoreMethod(method) {
+  return TEAM_SCORE_METHODS.has(method);
+}
+
 function getDefaultAssignmentMode(method) {
   if (method === '포볼') return TEAM_ASSIGNMENT_MODES.FOURBALL;
   if (method === '포섬') return TEAM_ASSIGNMENT_MODES.FOURSOME;
@@ -100,6 +107,56 @@ function getMemberAffiliationText(member) {
   if (clubName) return clubName;
   if (position) return position;
   return '소속 동호회 미입력';
+}
+
+function getScoreEntries(participants = [], teams = [], round = {}) {
+  if (!isTeamScoreMethod(round?.method)) {
+    return participants.map(member => ({
+      id: member.id,
+      type: 'individual',
+      name: member.name,
+      member,
+      members: [member],
+      source: member
+    }));
+  }
+
+  if (round?.method === '스크램블') {
+    return teams.map(team => {
+      const members = flattenGroupMembers(team);
+      return {
+        id: team.id,
+        type: 'team',
+        name: team.name,
+        members,
+        source: team
+      };
+    });
+  }
+
+  return teams.flatMap(team => (team.matchTeams || []).map(matchTeam => ({
+    id: matchTeam.id,
+    type: 'team',
+    name: matchTeam.name,
+    members: matchTeam.members || [],
+    source: matchTeam,
+    groupName: team.name
+  })));
+}
+
+function getScoreEntrySubtitle(entry) {
+  if (entry.type === 'individual') return getMemberAffiliationText(entry.member);
+  const memberNames = (entry.members || []).map(member => member.name).join(' + ');
+  return entry.groupName ? `${entry.groupName} · ${memberNames}` : memberNames;
+}
+
+function getRankingDisplayName(result) {
+  return result.member?.name || result.name || '이름 없음';
+}
+
+function getRankingMembersText(result) {
+  const names = (result.members || []).map(member => member.name).filter(Boolean);
+  return names.length > 0 ? names.join(' + ') : getRankingDisplayName(result);
 }
 
 function sanitizeHolePar(value, fallback = DEFAULT_HOLE_PAR) {
@@ -453,36 +510,255 @@ function parseCsv(text) {
   return { valid, errors, warnings };
 }
 
-function calculateRankings(members, scores, round) {
+function getExpectedHiddenHoleCount(holeCount) {
+  let count = 0;
+  for (let start = 0; start < holeCount; start += 9) {
+    count += Math.max(1, Math.floor(Math.min(9, holeCount - start) * 2 / 3));
+  }
+  return count;
+}
+
+function getStablefordPoint(score, par) {
+  const diff = Number(score || 0) - Number(par || DEFAULT_HOLE_PAR);
+  if (diff <= -3) return 5;
+  if (diff === -2) return 4;
+  if (diff === -1) return 3;
+  if (diff === 0) return 2;
+  if (diff === 1) return 1;
+  return 0;
+}
+
+function getStablefordHolePoints(scoreList, holePars) {
+  return holePars.map((par, index) => getStablefordPoint(scoreList[index], par));
+}
+
+function getBackCountValues(scoreList, holePars, method) {
+  const values = method === '스테이블포드'
+    ? getStablefordHolePoints(scoreList, holePars)
+    : scoreList.map(value => Number(value || 0));
+
+  return BACK_COUNT_HOLE_COUNTS.map(count => {
+    const slice = values.slice(Math.max(0, values.length - count));
+    return sumNumbers(slice);
+  });
+}
+
+function compareBackCount(a, b, direction = 'low') {
+  for (let index = 0; index < a.backCountValues.length; index += 1) {
+    const left = a.backCountValues[index];
+    const right = b.backCountValues[index];
+    if (left === right) continue;
+    return direction === 'high' ? right - left : left - right;
+  }
+  return 0;
+}
+
+function calculateMatchPlayPoints(entries, scores, holePars) {
+  const pointsByEntryId = Object.fromEntries(entries.map(entry => [entry.id, 0]));
+  const holePointsByEntryId = Object.fromEntries(entries.map(entry => [entry.id, Array(holePars.length).fill(0)]));
+
+  holePars.forEach((_, holeIndex) => {
+    const holeScores = entries
+      .map(entry => ({
+        entryId: entry.id,
+        score: Number(scores[entry.id]?.[holeIndex])
+      }))
+      .filter(result => Number.isFinite(result.score) && result.score > 0);
+
+    if (holeScores.length === 0) return;
+
+    const bestScore = Math.min(...holeScores.map(result => result.score));
+    const winners = holeScores.filter(result => result.score === bestScore);
+    const point = winners.length === 1 ? 1 : 0.5;
+
+    winners.forEach(winner => {
+      pointsByEntryId[winner.entryId] += point;
+      holePointsByEntryId[winner.entryId][holeIndex] = point;
+    });
+  });
+
+  return { pointsByEntryId, holePointsByEntryId };
+}
+
+function calculateRankings(scoreEntries, scores, round) {
   const method = typeof round === 'string' ? round : round?.method;
-  const results = members.map(member => {
-    const memberScores = scores[member.id] || [];
-    const holePars = getRoundHolePars(round, memberScores.length);
-    const totalPar = sumNumbers(holePars);
-    const total = sumNumbers(memberScores);
+  const holePars = getRoundHolePars(round);
+  const totalPar = sumNumbers(holePars);
+  const matchPlay = method === '매치 플레이'
+    ? calculateMatchPlayPoints(scoreEntries, scores, holePars)
+    : null;
+
+  const results = scoreEntries.map(entry => {
+    const scoreList = Array.from({ length: holePars.length }, (_, index) => Number(scores[entry.id]?.[index] || 0));
+    const total = sumNumbers(scoreList);
     let handicap = 0;
     let finalScore = total;
+    let points = null;
+    let matchPoints = null;
+    let sortValue = total;
+    let sortDirection = 'low';
+    let backCountValues = getBackCountValues(scoreList, holePars, method);
 
     if (method === '신페리오') {
       const hiddenHoleSummary = getHiddenHoleSummary(round, holePars);
-      const hiddenScoreSum = hiddenHoleSummary.indexes.reduce((sum, index) => sum + Number(memberScores[index] || 0), 0);
+      const hiddenScoreSum = hiddenHoleSummary.indexes.reduce((sum, index) => sum + Number(scoreList[index] || 0), 0);
       const hiddenParSum = hiddenHoleSummary.hiddenPar;
       const estimatedTotal = hiddenParSum > 0 ? hiddenScoreSum * totalPar / hiddenParSum : total;
       handicap = Math.max(0, (estimatedTotal - totalPar) * 0.8);
       finalScore = total - handicap;
+      sortValue = finalScore;
+    } else if (method === '스테이블포드') {
+      const holePoints = getStablefordHolePoints(scoreList, holePars);
+      points = sumNumbers(holePoints);
+      finalScore = points;
+      sortValue = points;
+      sortDirection = 'high';
+      backCountValues = BACK_COUNT_HOLE_COUNTS.map(count => sumNumbers(holePoints.slice(Math.max(0, holePoints.length - count))));
+    } else if (method === '매치 플레이') {
+      const holePoints = matchPlay?.holePointsByEntryId[entry.id] || [];
+      matchPoints = matchPlay?.pointsByEntryId[entry.id] || 0;
+      finalScore = matchPoints;
+      sortValue = matchPoints;
+      sortDirection = 'high';
+      backCountValues = BACK_COUNT_HOLE_COUNTS.map(count => sumNumbers(holePoints.slice(Math.max(0, holePoints.length - count))));
     }
 
-    return { member, total, handicap, finalScore };
-  }).sort((a, b) => a.finalScore - b.finalScore || a.total - b.total);
+    return {
+      id: entry.id,
+      type: entry.type,
+      name: entry.name,
+      member: entry.member,
+      members: entry.members || [],
+      total,
+      handicap,
+      finalScore,
+      points,
+      matchPoints,
+      scoreList,
+      backCountValues,
+      sortValue,
+      sortDirection
+    };
+  }).sort((a, b) => {
+    if (a.sortValue !== b.sortValue) {
+      return a.sortDirection === 'high' ? b.sortValue - a.sortValue : a.sortValue - b.sortValue;
+    }
 
-  let lastScore = null;
+    const backCountCompare = compareBackCount(a, b, a.sortDirection === 'high' ? 'high' : 'low');
+    if (backCountCompare !== 0) return backCountCompare;
+    if (a.total !== b.total) return a.total - b.total;
+    return getRankingDisplayName(a).localeCompare(getRankingDisplayName(b), 'ko');
+  });
+
+  let lastSortKey = null;
   let lastRank = 0;
   return results.map((result, index) => {
-    const rank = result.finalScore === lastScore ? lastRank : index + 1;
-    lastScore = result.finalScore;
+    const sortKey = [
+      result.sortValue,
+      ...result.backCountValues,
+      result.total
+    ].join('|');
+    const rank = sortKey === lastSortKey ? lastRank : index + 1;
+    lastSortKey = sortKey;
     lastRank = rank;
     return { ...result, rank };
   });
+}
+
+function formatRankingDetail(result, method) {
+  const handicap = Number.isFinite(Number(result.handicap)) ? Number(result.handicap).toFixed(1) : '0.0';
+  const finalScore = Number.isFinite(Number(result.finalScore)) ? Number(result.finalScore).toFixed(1) : Number(result.total || 0).toFixed(1);
+
+  if (method === '스테이블포드') {
+    return `포인트 ${result.points} · 총타수 ${result.total}`;
+  }
+
+  if (method === '매치 플레이') {
+    return `승점 ${result.matchPoints} · 총타수 ${result.total}`;
+  }
+
+  if (method === '신페리오') {
+    return `총타수 ${result.total} · 핸디 ${handicap} · 최종 ${finalScore}`;
+  }
+
+  if (isTeamScoreMethod(method)) {
+    return `팀 총타수 ${result.total}`;
+  }
+
+  return `총타수 ${result.total} · 핸디 ${handicap} · 최종 ${finalScore}`;
+}
+
+function shouldShowHiddenHoles(round) {
+  return round?.showHiddenHoles !== false;
+}
+
+function getHiddenHoleDescription(round, hiddenHoleSummary) {
+  if (!shouldShowHiddenHoles(round)) return '숨김 홀은 운영자 설정에 따라 비공개입니다.';
+  return `숨김 홀: ${formatHoleLabels(hiddenHoleSummary.indexes)} · 숨김 파 ${hiddenHoleSummary.hiddenPar}/${formatParValue(hiddenHoleSummary.targetPar)} · ${hiddenHoleSummary.isExactPar ? '규칙 일치' : '가장 가까운 후보'}`;
+}
+
+function escapeCsvValue(value) {
+  const text = String(value ?? '');
+  if (/[",\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+function buildCsv(rows) {
+  return rows.map(row => row.map(escapeCsvValue).join(',')).join('\r\n');
+}
+
+function createSafeFilename(value) {
+  const name = String(value || 'round-record').trim().replace(/[\\/:*?"<>|]/g, '_');
+  return name || 'round-record';
+}
+
+function downloadTextFile(filename, content, type = 'text/plain;charset=utf-8') {
+  const blob = new Blob(['\ufeff' + content], { type });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function buildRecordCsv(record) {
+  const round = record.round || {};
+  const holePars = getRoundHolePars(round);
+  const hiddenHoleSummary = round.method === '신페리오' ? getHiddenHoleSummary(round, holePars) : null;
+  const metadataRows = [
+    ['라운딩', round.title || ''],
+    ['날짜', round.date || ''],
+    ['장소', round.place || ''],
+    ['방식', round.method || ''],
+    ['기준파', sumNumbers(holePars)],
+    ['참가자', record.participantCount || ''],
+    ['조', record.teamCount || ''],
+    ['저장일', record.savedAt || '']
+  ];
+
+  if (hiddenHoleSummary) {
+    metadataRows.push(['신페리오', getHiddenHoleDescription(round, hiddenHoleSummary)]);
+  }
+
+  const scoreHeaders = holePars.map((_, index) => `${index + 1}H`);
+  const rankingRows = (record.rankings || []).map(result => [
+    result.rank,
+    getRankingDisplayName(result),
+    getRankingMembersText(result),
+    result.total,
+    Number.isFinite(Number(result.handicap)) ? Number(result.handicap).toFixed(1) : '',
+    Number.isFinite(Number(result.finalScore)) ? Number(result.finalScore).toFixed(1) : '',
+    result.points ?? '',
+    result.matchPoints ?? '',
+    ...(result.scoreList || []).map(value => Number(value || 0))
+  ]);
+
+  return buildCsv([
+    ...metadataRows,
+    [],
+    ['순위', '이름', '구성원', '총타수', '핸디', '최종', '포인트', '승점', ...scoreHeaders],
+    ...rankingRows
+  ]);
 }
 
 function Button({ children, onClick, variant = 'primary', disabled = false, icon: Icon }) {
@@ -520,7 +796,7 @@ function Field({ label, required, children }) {
   );
 }
 
-function HomeScreen({ setScreen, members, records, storageStatus }) {
+function HomeScreen({ setScreen, members, records, customPlaces, storageStatus }) {
   return (
     <main className="page home">
       <div className="hero">
@@ -533,11 +809,13 @@ function HomeScreen({ setScreen, members, records, storageStatus }) {
       <div className="stats">
         <Card><strong>{members.length}</strong><span>등록 회원</span></Card>
         <Card><strong>{records.length}</strong><span>라운딩 기록</span></Card>
+        <Card><strong>{customPlaces.length}</strong><span>사용자 구장</span></Card>
         <Card><strong>{storageStatus.title}</strong><span>{storageStatus.message}</span></Card>
       </div>
       <div className="grid menu">
         <Button icon={Users} onClick={() => setScreen('members')}>회원 등록 및 관리</Button>
         <Button icon={Plus} onClick={() => setScreen('roundCreate')}>라운딩 시작하기</Button>
+        <Button icon={MapPin} onClick={() => setScreen('courses')} variant="secondary">구장 관리</Button>
         <Button icon={ClipboardList} onClick={() => setScreen('records')} variant="secondary">라운딩 기록 보기</Button>
       </div>
     </main>
@@ -564,6 +842,19 @@ function MemberScreen({ members, setMembers, setScreen }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState('');
+  const [query, setQuery] = useState('');
+  const filteredMembers = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    if (!keyword) return members;
+    return members.filter(member => [
+      member.name,
+      member.phone,
+      member.gender,
+      member.clubName,
+      member.position,
+      member.skillLevel
+    ].some(value => String(value || '').toLowerCase().includes(keyword)));
+  }, [members, query]);
 
   const saveMember = () => {
     if (!form.name.trim()) return setError('필수항목인 이름을 입력해 주세요.');
@@ -599,7 +890,7 @@ function MemberScreen({ members, setMembers, setScreen }) {
   };
 
   const deleteMember = (member) => {
-    if (confirm(`${member.name} 회원을 삭제할까요?`)) {
+    if (confirm(`${member.name} 회원을 삭제할까요?\n\n저장된 과거 기록은 남지만, 이후 라운딩 참가자 선택과 조편성 후보에서는 제외됩니다.`)) {
       setMembers(prev => prev.filter(m => m.id !== member.id));
     }
   };
@@ -674,6 +965,12 @@ function MemberScreen({ members, setMembers, setScreen }) {
         )}
       </Card>
 
+      <Card title="회원 검색" subtitle={`${filteredMembers.length}명 표시`} icon={Search}>
+        <Field label="이름, 연락처, 동호회, 직책으로 검색">
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="예: 회장, 010-1111, 장성" />
+        </Field>
+      </Card>
+
       {showForm && (
         <Card title={editingId ? '회원 수정' : '신규 회원 등록'}>
           <div className="form-grid">
@@ -706,7 +1003,7 @@ function MemberScreen({ members, setMembers, setScreen }) {
       )}
 
       <div className="list">
-        {members.map(member => (
+        {filteredMembers.map(member => (
           <Card key={member.id}>
             <div className="member-row">
               <div>
@@ -721,12 +1018,17 @@ function MemberScreen({ members, setMembers, setScreen }) {
             </div>
           </Card>
         ))}
+        {filteredMembers.length === 0 && (
+          <Card>
+            <p>검색 조건에 맞는 회원이 없습니다.</p>
+          </Card>
+        )}
       </div>
     </main>
   );
 }
 
-function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces }) {
+function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces, customPlaces = [] }) {
   const [province, setProvince] = useState('전라남도');
   const [round, setLocalRound] = useState({
     title: '정기 라운딩',
@@ -735,19 +1037,33 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces 
     memo: '',
     holes: 18,
     method: '스트로크 플레이',
-    holePars: createDefaultHolePars(18)
+    holePars: createDefaultHolePars(18),
+    hiddenHoleMode: 'auto',
+    manualHiddenHoleIndexes: [],
+    showHiddenHoles: true
   });
   const [error, setError] = useState('');
 
-  const places = [...new Set([...(PARK_GOLF_PLACES[province] || []), ...recentPlaces])];
+  const customPlaceNames = customPlaces
+    .filter(place => !place.province || place.province === province)
+    .map(place => place.name)
+    .filter(Boolean);
+  const places = [...new Set([...(PARK_GOLF_PLACES[province] || []), ...customPlaceNames, ...recentPlaces])];
   const holePars = getRoundHolePars(round);
   const totalPar = sumNumbers(holePars);
+  const expectedHiddenCount = getExpectedHiddenHoleCount(holePars.length);
+  const manualHiddenIndexes = (round.manualHiddenHoleIndexes || [])
+    .filter(index => index >= 0 && index < holePars.length)
+    .sort((a, b) => a - b);
+  const manualHiddenPar = manualHiddenIndexes.reduce((sum, index) => sum + Number(holePars[index] || 0), 0);
+  const targetHiddenPar = totalPar * 2 / 3;
 
   const changeHoleCount = (holes) => {
     setLocalRound(prev => ({
       ...prev,
       holes,
-      holePars: createDefaultHolePars(holes, prev.holePars)
+      holePars: createDefaultHolePars(holes, prev.holePars),
+      manualHiddenHoleIndexes: (prev.manualHiddenHoleIndexes || []).filter(index => index < holes)
     }));
   };
 
@@ -759,19 +1075,50 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces 
     });
   };
 
+  const toggleManualHiddenHole = (index) => {
+    setLocalRound(prev => {
+      const selected = new Set(prev.manualHiddenHoleIndexes || []);
+      if (selected.has(index)) selected.delete(index);
+      else selected.add(index);
+      return {
+        ...prev,
+        manualHiddenHoleIndexes: [...selected].sort((a, b) => a - b)
+      };
+    });
+  };
+
   const submit = () => {
     if (!round.title.trim()) return setError('라운딩 제목을 입력해 주세요.');
     if (!round.date.trim()) return setError('날짜를 입력해 주세요.');
     if (round.place.trim()) setRecentPlaces(prev => [round.place.trim(), ...prev.filter(p => p !== round.place.trim())].slice(0, 10));
     const normalizedHolePars = getRoundHolePars(round);
-    const hiddenHoleIndexes = round.method === '신페리오'
-      ? selectNewPeoriaHiddenHoleIndexes(normalizedHolePars)
-      : [];
+    let hiddenHoleIndexes = [];
+    if (round.method === '신페리오') {
+      if (round.hiddenHoleMode === 'manual') {
+        const selectedIndexes = (round.manualHiddenHoleIndexes || [])
+          .filter(index => index >= 0 && index < normalizedHolePars.length)
+          .sort((a, b) => a - b);
+        const selectedPar = selectedIndexes.reduce((sum, index) => sum + Number(normalizedHolePars[index] || 0), 0);
+        const targetPar = sumNumbers(normalizedHolePars) * 2 / 3;
+        if (selectedIndexes.length !== getExpectedHiddenHoleCount(normalizedHolePars.length)) {
+          return setError(`직접 선택 숨김 홀은 ${getExpectedHiddenHoleCount(normalizedHolePars.length)}개여야 합니다.`);
+        }
+        if (selectedPar * 3 !== sumNumbers(normalizedHolePars) * 2) {
+          return setError(`직접 선택 숨김 홀의 파 합계가 ${formatParValue(targetPar)}타가 되도록 선택해 주세요.`);
+        }
+        hiddenHoleIndexes = selectedIndexes;
+      } else {
+        hiddenHoleIndexes = selectNewPeoriaHiddenHoleIndexes(normalizedHolePars, `${round.title}-${round.date}-${round.place}-${normalizedHolePars.join('-')}`);
+      }
+    }
     setRound({
       ...round,
       id: crypto.randomUUID(),
       province,
       holePars: normalizedHolePars,
+      hiddenHoleMode: round.method === '신페리오' ? round.hiddenHoleMode : 'auto',
+      manualHiddenHoleIndexes: round.method === '신페리오' ? manualHiddenIndexes : [],
+      showHiddenHoles: round.method === '신페리오' ? round.showHiddenHoles !== false : true,
       hiddenHoleIndexes
     });
     setScreen('memberSelect');
@@ -823,6 +1170,41 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces 
             </div>
           </div>
         </Card>
+
+        {round.method === '신페리오' && (
+          <Card
+            title="신페리오 숨김 홀"
+            subtitle={`필요 숨김 홀 ${expectedHiddenCount}개 · 목표 숨김 파 ${formatParValue(targetHiddenPar)}`}
+          >
+            <Field label="선정 방식">
+              <div className="chip-row">
+                <button className={round.hiddenHoleMode === 'auto' ? 'chip active' : 'chip'} onClick={() => setLocalRound({ ...round, hiddenHoleMode: 'auto' })}>자동 선정</button>
+                <button className={round.hiddenHoleMode === 'manual' ? 'chip active' : 'chip'} onClick={() => setLocalRound({ ...round, hiddenHoleMode: 'manual' })}>직접 선택</button>
+              </div>
+            </Field>
+            <label className="check">
+              <input type="checkbox" checked={round.showHiddenHoles !== false} onChange={e => setLocalRound({ ...round, showHiddenHoles: e.target.checked })} />
+              순위표와 기록에서 숨김 홀 공개
+            </label>
+            {round.hiddenHoleMode === 'manual' && (
+              <div className="field">
+                <span>숨김 홀 선택 · {manualHiddenIndexes.length}/{expectedHiddenCount}개 · 선택 파 {manualHiddenPar}/{formatParValue(targetHiddenPar)}</span>
+                <div className="hidden-hole-grid">
+                  {holePars.map((par, index) => (
+                    <button
+                      key={index}
+                      className={manualHiddenIndexes.includes(index) ? 'hole-toggle active' : 'hole-toggle'}
+                      onClick={() => toggleManualHiddenHole(index)}
+                    >
+                      <strong>{index + 1}H</strong>
+                      <span>파 {par}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Card>
+        )}
       </div>
 
       {error && <p className="error">{error}</p>}
@@ -962,27 +1344,28 @@ function TeamResultScreen({
   );
 }
 
-function ScoreInputScreen({ setScreen, participants, round, scores, setScores }) {
+function ScoreInputScreen({ setScreen, participants, round, teams, scores, setScores }) {
   const holePars = useMemo(() => getRoundHolePars(round), [round]);
+  const scoreEntries = useMemo(() => getScoreEntries(participants, teams, round), [participants, teams, round]);
 
   React.useEffect(() => {
     setScores(prev => {
       const next = { ...prev };
-      participants.forEach(p => {
-        const existingScores = next[p.id] || [];
-        next[p.id] = Array.from({ length: holePars.length }, (_, index) => {
+      scoreEntries.forEach(entry => {
+        const existingScores = next[entry.id] || [];
+        next[entry.id] = Array.from({ length: holePars.length }, (_, index) => {
           const existingScore = Number(existingScores[index]);
           return Number.isFinite(existingScore) ? existingScore : holePars[index];
         });
       });
       return next;
     });
-  }, [participants, holePars, setScores]);
+  }, [scoreEntries, holePars, setScores]);
 
-  const updateScore = (memberId, index, value) => {
+  const updateScore = (entryId, index, value) => {
     setScores(prev => ({
       ...prev,
-      [memberId]: prev[memberId].map((v, i) => i === index ? Number(value || 0) : v)
+      [entryId]: prev[entryId].map((v, i) => i === index ? Number(value || 0) : v)
     }));
   };
 
@@ -990,11 +1373,11 @@ function ScoreInputScreen({ setScreen, participants, round, scores, setScores })
     <main className="page">
       <header className="topbar"><h1>점수 입력</h1><p>{round.title} · {round.holes}홀 · {round.method} · 기준파 {sumNumbers(holePars)}</p></header>
       <div className="list">
-        {participants.map(member => (
-          <Card key={member.id} title={member.name} subtitle={`현재 총타수 ${(scores[member.id] || []).reduce((a,b) => a+b, 0)}`}>
+        {scoreEntries.map(entry => (
+          <Card key={entry.id} title={entry.name} subtitle={`${getScoreEntrySubtitle(entry)} · 현재 총타수 ${(scores[entry.id] || []).reduce((a,b) => a+b, 0)}`}>
             <div className="score-grid">
-              {(scores[member.id] || []).map((score, i) => (
-                <label key={i}><span>{i+1}H <small>파 {holePars[i]}</small></span><input type="number" value={score} onChange={e => updateScore(member.id, i, e.target.value)} /></label>
+              {(scores[entry.id] || []).map((score, i) => (
+                <label key={i}><span>{i+1}H <small>파 {holePars[i]}</small></span><input type="number" value={score} onChange={e => updateScore(entry.id, i, e.target.value)} /></label>
               ))}
             </div>
           </Card>
@@ -1009,7 +1392,8 @@ function ScoreInputScreen({ setScreen, participants, round, scores, setScores })
 }
 
 function RankingScreen({ setScreen, participants, scores, round, teams, assignmentMode, records, setRecords }) {
-  const rankings = calculateRankings(participants, scores, round);
+  const scoreEntries = useMemo(() => getScoreEntries(participants, teams, round), [participants, teams, round]);
+  const rankings = calculateRankings(scoreEntries, scores, round);
   const holePars = getRoundHolePars(round);
   const totalPar = sumNumbers(holePars);
   const hiddenHoleSummary = round.method === '신페리오' ? getHiddenHoleSummary(round, holePars) : null;
@@ -1022,6 +1406,7 @@ function RankingScreen({ setScreen, participants, scores, round, teams, assignme
       teams,
       participantCount: participants.length,
       teamCount: teams.length,
+      scoringEntryCount: scoreEntries.length,
       rankings,
       savedAt: new Date().toLocaleString()
     };
@@ -1038,15 +1423,19 @@ function RankingScreen({ setScreen, participants, scores, round, teams, assignme
           title="신페리오 계산 정보"
           subtitle={`숨김 홀 ${hiddenHoleSummary.indexes.length}개 · 숨김 파 ${hiddenHoleSummary.hiddenPar}/${formatParValue(hiddenHoleSummary.targetPar)} · ${hiddenHoleSummary.isExactPar ? '규칙 일치' : '가장 가까운 후보'}`}
         >
-          <p>숨김 홀: {formatHoleLabels(hiddenHoleSummary.indexes)}</p>
+          <p>{getHiddenHoleDescription(round, hiddenHoleSummary)}</p>
         </Card>
       )}
       <div className="list">
         {rankings.map(r => (
-          <Card key={r.member.id}>
+          <Card key={r.id}>
             <div className="ranking-row">
               <strong>{r.rank}위</strong>
-              <div><h3>{r.member.name}</h3><p>총타수 {r.total} · 핸디 {r.handicap.toFixed(1)} · 최종 {r.finalScore.toFixed(1)}</p></div>
+              <div>
+                <h3>{getRankingDisplayName(r)}</h3>
+                {r.type === 'team' && <p>{getRankingMembersText(r)}</p>}
+                <p>{formatRankingDetail(r, round.method)}</p>
+              </div>
             </div>
           </Card>
         ))}
@@ -1059,7 +1448,19 @@ function RankingScreen({ setScreen, participants, scores, round, teams, assignme
   );
 }
 
-function RecordScreen({ setScreen, records }) {
+function RecordScreen({ setScreen, records, setRecords }) {
+  const [expandedRecordId, setExpandedRecordId] = useState(null);
+
+  const deleteRecord = (record) => {
+    if (!confirm(`${record.round.title} 기록을 삭제할까요?`)) return;
+    setRecords(prev => prev.filter(item => item.id !== record.id));
+  };
+
+  const exportRecord = (record) => {
+    const filename = `${createSafeFilename(record.round.title)}_${record.round.date || 'date'}.csv`;
+    downloadTextFile(filename, buildRecordCsv(record), 'text/csv;charset=utf-8');
+  };
+
   return (
     <main className="page">
       <header className="topbar">
@@ -1077,14 +1478,121 @@ function RecordScreen({ setScreen, records }) {
             return (
               <Card key={record.id} title={record.round.title} subtitle={`${record.round.date} · ${record.round.place}`}>
                 <p>{record.round.holes}홀 · 기준파 {sumNumbers(recordHolePars)} · {record.round.method} · {getAssignmentModeLabel(record.assignmentMode)} · 참가자 {record.participantCount}명 · {record.teamCount}개 조</p>
-                {record.round.method === '신페리오' && <p>숨김 홀: {formatHoleLabels(recordHiddenHoleSummary.indexes)} · 숨김 파 {recordHiddenHoleSummary.hiddenPar}/{formatParValue(recordHiddenHoleSummary.targetPar)} · {recordHiddenHoleSummary.isExactPar ? '규칙 일치' : '가장 가까운 후보'}</p>}
+                {record.round.method === '신페리오' && <p>{getHiddenHoleDescription(record.round, recordHiddenHoleSummary)}</p>}
                 <ol className="mini-ranking">
-                  {record.rankings.slice(0, 3).map(r => <li key={r.member.id}>{r.rank}위 {r.member.name} — 최종 {r.finalScore.toFixed(1)}</li>)}
+                  {record.rankings.slice(0, 3).map(r => <li key={r.id || r.member?.id}>{r.rank}위 {getRankingDisplayName(r)} - {formatRankingDetail(r, record.round.method)}</li>)}
                 </ol>
+                {expandedRecordId === record.id && (
+                  <div className="record-detail">
+                    <h3>전체 순위</h3>
+                    <ol className="mini-ranking">
+                      {record.rankings.map(r => (
+                        <li key={r.id || r.member?.id}>
+                          {r.rank}위 {getRankingDisplayName(r)} - {formatRankingDetail(r, record.round.method)}
+                          {r.type === 'team' && <small> 구성원: {getRankingMembersText(r)}</small>}
+                        </li>
+                      ))}
+                    </ol>
+                    {record.round.memo && <p>메모: {record.round.memo}</p>}
+                  </div>
+                )}
                 <small>저장일: {record.savedAt}</small>
+                <div className="button-row record-actions">
+                  <Button variant="secondary" icon={FileText} onClick={() => setExpandedRecordId(expandedRecordId === record.id ? null : record.id)}>
+                    {expandedRecordId === record.id ? '상세 닫기' : '상세보기'}
+                  </Button>
+                  <Button variant="secondary" icon={Download} onClick={() => exportRecord(record)}>CSV 내보내기</Button>
+                  <Button variant="danger" icon={Trash2} onClick={() => deleteRecord(record)}>삭제</Button>
+                </div>
               </Card>
             );
           })}
+        </div>
+      )}
+    </main>
+  );
+}
+
+function CourseManageScreen({ setScreen, customPlaces, setCustomPlaces }) {
+  const [province, setProvince] = useState('전라남도');
+  const [name, setName] = useState('');
+  const [error, setError] = useState('');
+
+  const addPlace = () => {
+    const placeName = name.trim();
+    if (!placeName) return setError('구장 이름을 입력해 주세요.');
+    const exists = customPlaces.some(place => place.province === province && place.name === placeName)
+      || (PARK_GOLF_PLACES[province] || []).includes(placeName);
+    if (exists) return setError('이미 등록되어 있거나 기본 목록에 있는 구장입니다.');
+
+    setCustomPlaces(prev => [{
+      id: crypto.randomUUID(),
+      province,
+      name: placeName,
+      createdAt: new Date().toLocaleString()
+    }, ...prev]);
+    setName('');
+    setError('');
+  };
+
+  const deletePlace = (place) => {
+    if (!confirm(`${place.name} 구장을 삭제할까요?\n\n저장된 과거 라운딩 기록의 장소명은 그대로 유지됩니다.`)) return;
+    setCustomPlaces(prev => prev.filter(item => item.id !== place.id));
+  };
+
+  const groupedPlaces = customPlaces.reduce((groups, place) => {
+    const key = place.province || '기타';
+    return {
+      ...groups,
+      [key]: [...(groups[key] || []), place]
+    };
+  }, {});
+
+  return (
+    <main className="page">
+      <header className="topbar">
+        <Button variant="ghost" icon={Home} onClick={() => setScreen('home')}>홈</Button>
+        <h1>구장 관리</h1>
+      </header>
+
+      <Card title="사용자 구장 등록" subtitle="라운딩 생성 화면의 구장 선택 목록에 추가됩니다." icon={MapPin}>
+        <div className="form-grid">
+          <Field label="행정구역">
+            <select value={province} onChange={e => setProvince(e.target.value)}>
+              {PROVINCES.map(item => <option key={item}>{item}</option>)}
+            </select>
+          </Field>
+          <Field label="구장 이름" required>
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="예: 우리동네 파크골프장" />
+          </Field>
+        </div>
+        {error && <p className="error">{error}</p>}
+        <div className="button-row">
+          <Button icon={Plus} onClick={addPlace}>구장 추가</Button>
+        </div>
+      </Card>
+
+      {customPlaces.length === 0 ? (
+        <Card>
+          <p>아직 등록한 사용자 구장이 없습니다.</p>
+        </Card>
+      ) : (
+        <div className="list">
+          {Object.entries(groupedPlaces).map(([groupName, places]) => (
+            <Card key={groupName} title={groupName} subtitle={`${places.length}개 구장`}>
+              <div className="course-list">
+                {places.map(place => (
+                  <div key={place.id} className="course-row">
+                    <div>
+                      <strong>{place.name}</strong>
+                      <small>등록일: {place.createdAt}</small>
+                    </div>
+                    <Button variant="danger" icon={Trash2} onClick={() => deletePlace(place)}>삭제</Button>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          ))}
         </div>
       )}
     </main>
@@ -1103,6 +1611,7 @@ function App() {
   const [scores, setScores] = useState({});
   const [records, setRecords] = useState([]);
   const [recentPlaces, setRecentPlaces] = useState(DEFAULT_RECENT_PLACES);
+  const [customPlaces, setCustomPlaces] = useState([]);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [isSupabaseReady, setIsSupabaseReady] = useState(false);
   const [storageStatus, setStorageStatus] = useState({
@@ -1123,6 +1632,7 @@ function App() {
           setMembers(getStoredArray(data.members, initialMembers));
           setRecords(getStoredArray(data.records, []));
           setRecentPlaces(getStoredArray(data.recentPlaces, DEFAULT_RECENT_PLACES));
+          setCustomPlaces(getStoredArray(data.customPlaces, []));
         }
 
         setIsSupabaseReady(isConfigured);
@@ -1151,7 +1661,7 @@ function App() {
     if (!isDataLoaded || !isSupabaseReady) return undefined;
 
     const timeoutId = window.setTimeout(() => {
-      saveParkBuddyState({ members, records, recentPlaces })
+      saveParkBuddyState({ members, records, recentPlaces, customPlaces })
         .then(() => {
           setStorageStatus({
             title: 'Supabase',
@@ -1167,7 +1677,7 @@ function App() {
     }, 600);
 
     return () => window.clearTimeout(timeoutId);
-  }, [isDataLoaded, isSupabaseReady, members, records, recentPlaces]);
+  }, [isDataLoaded, isSupabaseReady, members, records, recentPlaces, customPlaces]);
 
   const navigate = (next) => {
     if (next === 'teamResult') setTeams([]);
@@ -1187,14 +1697,15 @@ function App() {
 
   return (
     <>
-      {screen === 'home' && <HomeScreen setScreen={navigate} members={members} records={records} storageStatus={storageStatus} />}
+      {screen === 'home' && <HomeScreen setScreen={navigate} members={members} records={records} customPlaces={customPlaces} storageStatus={storageStatus} />}
       {screen === 'members' && <MemberScreen setScreen={navigate} members={members} setMembers={setMembers} />}
-      {screen === 'roundCreate' && <RoundCreateScreen setScreen={navigate} setRound={setRound} recentPlaces={recentPlaces} setRecentPlaces={setRecentPlaces} />}
+      {screen === 'roundCreate' && <RoundCreateScreen setScreen={navigate} setRound={setRound} recentPlaces={recentPlaces} setRecentPlaces={setRecentPlaces} customPlaces={customPlaces} />}
+      {screen === 'courses' && <CourseManageScreen setScreen={navigate} customPlaces={customPlaces} setCustomPlaces={setCustomPlaces} />}
       {screen === 'memberSelect' && <MemberSelectScreen setScreen={navigate} members={members} memberStats={memberStats} setParticipants={setParticipants} setLeaders={setLeaders} setTeamSize={setTeamSize} teamSize={teamSize} round={round} teamAssignmentMode={teamAssignmentMode} setTeamAssignmentMode={setTeamAssignmentMode} />}
       {screen === 'teamResult' && <TeamResultScreen setScreen={navigate} participants={participants} leaders={leaders} teamSize={teamSize} teams={teams} setTeams={setTeams} round={round} assignmentMode={teamAssignmentMode || getDefaultAssignmentMode(round?.method)} memberStats={memberStats} previousRoundTeams={previousRoundTeams} />}
-      {screen === 'scoreInput' && <ScoreInputScreen setScreen={navigate} participants={participants} round={round} scores={scores} setScores={setScores} />}
+      {screen === 'scoreInput' && <ScoreInputScreen setScreen={navigate} participants={participants} teams={teams} round={round} scores={scores} setScores={setScores} />}
       {screen === 'ranking' && <RankingScreen setScreen={navigate} participants={participants} scores={scores} round={round} teams={teams} assignmentMode={teamAssignmentMode || getDefaultAssignmentMode(round?.method)} records={records} setRecords={setRecords} />}
-      {screen === 'records' && <RecordScreen setScreen={navigate} records={records} />}
+      {screen === 'records' && <RecordScreen setScreen={navigate} records={records} setRecords={setRecords} />}
     </>
   );
 }

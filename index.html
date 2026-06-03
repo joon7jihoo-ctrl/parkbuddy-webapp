@@ -17,7 +17,10 @@
         stylesheet.href = '/parkbuddy-webapp/assets/main.css';
         document.head.appendChild(stylesheet);
 
-        import(/* @vite-ignore */ '/parkbuddy-webapp/assets/main.js');
+        const script = document.createElement('script');
+        script.type = 'module';
+        script.src = '/parkbuddy-webapp/assets/main.js';
+        document.body.appendChild(script);
       } else {
         import('/src/main.jsx');
       }

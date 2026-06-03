@@ -160,6 +160,25 @@ async function selectMethod(client, method) {
   await delay(350);
 }
 
+async function setFieldValue(client, labelText, value) {
+  const updated = await evaluate(client, `
+    (() => {
+      const field = [...document.querySelectorAll('label.field')]
+        .find(element => element.innerText.includes(${JSON.stringify(labelText)}));
+      const input = field?.querySelector('input, textarea, select');
+      if (!input) return false;
+      const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), 'value');
+      descriptor?.set ? descriptor.set.call(input, ${JSON.stringify(value)}) : input.value = ${JSON.stringify(value)};
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()
+  `);
+
+  if (!updated) throw new Error(`Could not set field: ${labelText}`);
+  await delay(350);
+}
+
 async function selectAllMembers(client) {
   await evaluate(client, `
     (() => {
@@ -226,18 +245,43 @@ async function runMainFlow(client) {
   await clickByText(client, '라운딩 기록 보기');
   await waitForText(client, '라운딩 기록 보기');
   await capture(client, '08-records');
+
+  await clickByText(client, '상세보기');
+  await waitForText(client, '전체 순위');
+  await capture(client, '08-records-detail');
 }
 
-async function runTeamFlow(client, method, prefix) {
+async function goHomeOrReset(client) {
   const canGoHome = await evaluate(client, `
     [...document.querySelectorAll('button, .btn, label.btn')].some(element => element.innerText.includes('홈'))
   `);
-  if (canGoHome) {
-    await clickByText(client, '홈');
-    await waitForText(client, 'ParkBuddy Web');
-  } else {
+  if (!canGoHome) {
     await resetApp(client);
+    return;
   }
+  await clickByText(client, '홈');
+  await waitForText(client, 'ParkBuddy Web');
+}
+
+async function runCourseFlow(client) {
+  await goHomeOrReset(client);
+  await clickByText(client, '구장 관리');
+  await waitForText(client, '구장 관리');
+  await capture(client, '09-courses');
+
+  const courseName = `검증 파크골프장 ${Date.now()}`;
+  await setFieldValue(client, '구장 이름', courseName);
+  await clickByText(client, '구장 추가');
+  await waitForText(client, courseName);
+  await capture(client, '10-courses-added');
+
+  await clickByText(client, '삭제');
+  await waitForText(client, '사용자 구장 등록');
+  await capture(client, '11-courses-deleted');
+}
+
+async function runMethodFlow(client, method, prefix) {
+  await goHomeOrReset(client);
   await clickByText(client, '라운딩 시작하기');
   await waitForText(client, '라운딩 생성');
   await selectMethod(client, method);
@@ -251,6 +295,14 @@ async function runTeamFlow(client, method, prefix) {
   await clickByText(client, '조편성하기');
   await waitForText(client, '조편성 결과');
   await capture(client, `${prefix}-team-result-${method}`);
+
+  await clickByText(client, '점수 입력으로 이동');
+  await waitForText(client, '점수 입력');
+  await capture(client, `${prefix}-score-input-${method}`);
+
+  await clickByText(client, '순위표 보기');
+  await waitForText(client, '순위표');
+  await capture(client, `${prefix}-ranking-${method}`);
 }
 
 async function main() {
@@ -281,8 +333,13 @@ async function main() {
     const client = await connectChrome();
     await evaluate(client, 'window.alert = () => {}; window.confirm = () => true; true');
     await runMainFlow(client);
-    await runTeamFlow(client, '포섬', '09');
-    await runTeamFlow(client, '포볼', '12');
+    await runCourseFlow(client);
+    await runMethodFlow(client, '신페리오', '12');
+    await runMethodFlow(client, '매치 플레이', '16');
+    await runMethodFlow(client, '스크램블', '20');
+    await runMethodFlow(client, '포섬', '24');
+    await runMethodFlow(client, '포볼', '28');
+    await runMethodFlow(client, '스테이블포드', '32');
   } finally {
     chrome.kill();
     vite.kill();
