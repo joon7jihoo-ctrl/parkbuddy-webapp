@@ -1706,7 +1706,6 @@ function MemberSelectScreen({
         ))}
       </div>
       <div className="bottom-actions">
-        <Button variant="ghost" onClick={() => setScreen('roundCreate')}>이전</Button>
         <Button onClick={next}>조편성하기</Button>
       </div>
     </main>
@@ -1763,7 +1762,7 @@ function TeamResultScreen({
 
     setRecords(prev => [record, ...prev.filter(item => item.round?.id !== round.id)]);
     alert('조편성을 라운딩 기록에 저장했습니다. 점수 입력은 라운딩 기록 보기에서 진행하세요.');
-    setScreen('records');
+    setScreen('home');
   };
 
   const pattern = getTeamSizePattern(participants.length, teams.length, teams);
@@ -1813,7 +1812,7 @@ function TeamResultScreen({
       </div>
       <div className="bottom-actions">
         <Button variant="secondary" icon={Shuffle} onClick={makeTeams}>다시 편성</Button>
-        <Button icon={Save} onClick={saveRoundRecord}>Finish Setup</Button>
+        <Button icon={Save} onClick={saveRoundRecord}>라운딩 기록 생성</Button>
       </div>
     </main>
   );
@@ -1934,8 +1933,7 @@ function ScoreInputScreen({ setScreen, participants, round, teams, scores, setSc
       </Card>
 
       <div className="bottom-actions">
-        <Button variant="ghost" onClick={() => setScreen(activeRecordId ? 'records' : 'teamResult')}>이전</Button>
-        <Button onClick={() => setScreen('ranking')}>Open Leaderboard</Button>
+        <Button onClick={() => setScreen('ranking')}>순위표 보기</Button>
       </div>
     </main>
   );
@@ -2036,7 +2034,6 @@ function RankingScreen({ setScreen, participants, scores, round, teams, assignme
         ))}
       </div>
       <div className="bottom-actions">
-        <Button variant="ghost" onClick={() => setScreen('scoreInput')}>이전</Button>
         <Button variant="secondary" icon={Share2} onClick={shareResult}>공유 카드 복사</Button>
         <Button icon={Save} onClick={saveRecord}>기록에 점수 저장</Button>
       </div>
@@ -2101,10 +2098,15 @@ function SharedScoreScreen({ records, setRecords, recordId, entryId, setScreen }
   const holePars = useMemo(() => getRoundHolePars(record?.round), [record]);
   const courseGroups = useMemo(() => getCourseGroups(holePars), [holePars]);
   const [localScores, setLocalScores] = useState(() => getInitialEntryScores(record, entryId));
+  const [activeCourseIndex, setActiveCourseIndex] = useState(0);
 
   React.useEffect(() => {
     setLocalScores(getInitialEntryScores(record, entryId));
   }, [record?.id, entryId]);
+
+  React.useEffect(() => {
+    if (activeCourseIndex >= courseGroups.length) setActiveCourseIndex(0);
+  }, [activeCourseIndex, courseGroups.length]);
 
   if (!record || !entry) {
     return (
@@ -2117,24 +2119,41 @@ function SharedScoreScreen({ records, setRecords, recordId, entryId, setScreen }
     );
   }
 
+  const selectedCourse = courseGroups[activeCourseIndex] || courseGroups[0];
+
+  const persistSharedScores = (nextEntryScores, showAlert = false) => {
+    setRecords(prev => prev.map(item => {
+      if (item.id !== record.id) return item;
+
+      const nextScores = getNormalizedRecordScores(item, entry.id, nextEntryScores);
+      const updatedAt = new Date().toLocaleString();
+      return {
+        ...item,
+        scores: nextScores,
+        rankings: calculateRankings(
+          getScoreEntries(item.participants || [], item.teams || [], item.round || {}),
+          nextScores,
+          item.round
+        ),
+        status: 'scored',
+        updatedAt,
+        scoredAt: updatedAt
+      };
+    }));
+    if (showAlert) alert('점수를 저장했습니다. 현재 순위가 갱신됩니다.');
+  };
+
   const updateScore = (index, value) => {
-    setLocalScores(prev => prev.map((score, scoreIndex) => scoreIndex === index ? Number(value || 0) : score));
+    const nextValue = Math.max(0, Number(value || 0));
+    setLocalScores(prev => {
+      const nextScores = prev.map((score, scoreIndex) => scoreIndex === index ? nextValue : score);
+      persistSharedScores(nextScores);
+      return nextScores;
+    });
   };
 
   const saveSharedScores = () => {
-    const nextScores = getNormalizedRecordScores(record, entry.id, localScores);
-    const rankings = calculateRankings(entries, nextScores, record.round);
-    const updatedAt = new Date().toLocaleString();
-
-    setRecords(prev => prev.map(item => item.id === record.id ? {
-      ...item,
-      scores: nextScores,
-      rankings,
-      status: 'scored',
-      updatedAt,
-      scoredAt: updatedAt
-    } : item));
-    alert('점수를 저장했습니다. 현재 순위가 갱신됩니다.');
+    persistSharedScores(localScores, true);
   };
 
   const latestRankings = record.rankings || [];
@@ -2146,22 +2165,56 @@ function SharedScoreScreen({ records, setRecords, recordId, entryId, setScreen }
         <p>{record.round.title} · {record.round.place} · {record.round.method}</p>
       </header>
 
+      <section className="live-score-banner">
+        <div>
+          <Activity size={20} />
+          <strong>Live Score Sync</strong>
+        </div>
+        <span>코스 탭을 바꿔도 입력값은 유지되고, 순위는 자동으로 갱신됩니다.</span>
+      </section>
+
       <Card title={entry.name} subtitle={`${getScoreEntrySubtitle(entry)} · 현재 총타수 ${sumNumbers(localScores)}`}>
-        <div className="course-input-list">
-          {courseGroups.map(course => (
-            <section className="course-input-card" key={course.label}>
-              <h3>{course.label}</h3>
-              <div className="score-grid">
-                {course.holes.map(hole => (
-                  <label key={hole.index}>
-                    <span>{hole.number}H <small>파 {hole.value}</small></span>
-                    <input type="number" value={localScores[hole.index] ?? hole.value} onChange={event => updateScore(hole.index, event.target.value)} />
-                  </label>
-                ))}
-              </div>
-            </section>
+        <div className="course-tabs" role="tablist" aria-label="코스 선택">
+          {courseGroups.map((course, index) => (
+            <button
+              key={course.label}
+              className={activeCourseIndex === index ? 'course-tab active' : 'course-tab'}
+              role="tab"
+              aria-selected={activeCourseIndex === index}
+              onClick={() => setActiveCourseIndex(index)}
+            >
+              <strong>{course.label}</strong>
+              <span>1-9H</span>
+            </button>
           ))}
         </div>
+        {selectedCourse && (
+          <section className="shared-score-table-card">
+            <div className="shared-score-table-title">
+              <strong>{selectedCourse.label}</strong>
+              <span>{selectedCourse.holes.map(hole => localScores[hole.index] ?? hole.value).reduce((sum, score) => sum + Number(score || 0), 0)}타</span>
+            </div>
+            <div className="score-hole-table" role="table" aria-label={`${selectedCourse.label} 홀별 점수표`}>
+              {selectedCourse.holes.map(hole => {
+                const scoreValue = Number(localScores[hole.index] ?? hole.value);
+                return (
+                  <label className={`score-cell shared-score-cell ${getScoreDiffClass(scoreValue - Number(hole.value || 0))}`} key={hole.index}>
+                    <span className="hole-label">{hole.number}H</span>
+                    <small>PAR {hole.value}</small>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      min="0"
+                      value={localScores[hole.index] ?? hole.value}
+                      onChange={event => updateScore(hole.index, event.target.value)}
+                    />
+                  </label>
+                );
+              })}
+            </div>
+          </section>
+        )}
         <div className="button-row">
           <Button icon={Save} onClick={saveSharedScores}>점수 저장</Button>
           <Button variant="secondary" onClick={() => setScreen('sharedScoreSelect')}>대상 다시 선택</Button>

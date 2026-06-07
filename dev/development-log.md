@@ -520,3 +520,27 @@ GitHub CLI가 현재 환경에 설치되어 있지 않아 GitHub Actions secrets
 - `npm.cmd run build` 통과
 - `dev/capture-flow.mjs` 자동 브라우저 검증 통과
 - 캡처 경로: `C:\Capture`
+
+## 29. 2026-06-07 Supabase 정규 테이블 전환과 스포츠 플랫폼 UI
+
+Supabase 저장 구조와 앱의 시각 방향을 다음 단계 플랫폼 구조에 맞춰 개편했습니다.
+
+- Supabase 스키마를 `parkbuddy_clubs`, `parkbuddy_members`, `parkbuddy_courses`, `parkbuddy_rounds`, `parkbuddy_round_scores`, `parkbuddy_round_rankings`, `parkbuddy_app_settings`로 분리했습니다.
+- 기존 `parkbuddy_app_state` 단일 JSON 테이블은 fallback/migration 저장소로 유지합니다.
+- 앱 저장 서비스는 정규 테이블을 우선 사용하고, 정규 테이블이 아직 생성되지 않은 원격 DB에서는 기존 JSON 저장소로 자동 fallback합니다.
+- 회원, 사용자 구장, 라운딩 기록, 점수, 순위가 Supabase Table Editor에서 각각 확인될 수 있도록 행 단위 저장 구조를 추가했습니다.
+- 원격 Supabase REST 확인 결과 현재 프로젝트에는 아직 `parkbuddy_members` 정규 테이블이 생성되어 있지 않습니다.
+- anon key로는 테이블 생성 DDL을 실행할 수 없으므로, `supabase/schema.sql`을 Supabase SQL Editor에서 실행하면 정규 테이블 저장으로 자동 전환됩니다.
+- 원격의 스포츠 플랫폼 콘셉트 UI와 이번 변경을 병합하면서 홈, 조편성 결과, 점수 입력, 순위표, 공유 카드 중심의 플랫폼 톤을 유지했습니다.
+- 모든 화면의 앱 내부 이전 버튼을 다시 제거했습니다.
+- 공유 링크 점수 입력 화면을 상단 코스 탭과 1~9홀 스코어 표 구조로 변경했습니다.
+- 코스가 많을 때 상단 탭은 좌우 스크롤이 가능하도록 처리했습니다.
+- 각 홀 점수 셀은 모바일 숫자 키패드가 뜨도록 숫자 입력 모드로 최적화했습니다.
+- 코스 탭을 전환해도 입력값이 유지되며, 입력할 때마다 해당 라운딩 기록의 점수와 순위가 갱신됩니다.
+- `dev/capture-flow.mjs` 검증 흐름은 공유 링크 진입, 점수 저장, 현재 순위 확인까지 유지합니다.
+
+검증 결과:
+
+- `npm.cmd run build` 통과
+- `dev/capture-flow.mjs` 자동 브라우저 검증 통과
+- Supabase REST 확인: `parkbuddy_members`는 아직 원격 DB에 없어 `schema.sql` 실행 필요
