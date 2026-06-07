@@ -1,14 +1,32 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { join } from 'node:path';
 
-const appUrl = 'http://127.0.0.1:5173';
+let appUrl = 'http://127.0.0.1:5173';
 const captureDir = 'C:\\Capture';
 const chromePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const chromeProfileDir = join(captureDir, 'chrome-profile');
 const chromeDebugPort = 9222;
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function findAvailablePort(startPort) {
+  for (let port = startPort; port < startPort + 30; port += 1) {
+    const isAvailable = await new Promise(resolve => {
+      const server = createServer()
+        .once('error', () => resolve(false))
+        .once('listening', () => {
+          server.close(() => resolve(true));
+        })
+        .listen(port, '127.0.0.1');
+    });
+
+    if (isAvailable) return port;
+  }
+
+  throw new Error(`No available port found from ${startPort}`);
+}
 
 function startProcess(command, args, options = {}) {
   const child = spawn(command, args, {
@@ -84,13 +102,18 @@ async function connectChrome() {
   const client = new CdpClient(socket);
   await client.send('Page.enable');
   await client.send('Runtime.enable');
-  await client.send('Emulation.setDeviceMetricsOverride', {
-    width: 1365,
-    height: 900,
-    deviceScaleFactor: 1,
-    mobile: false
-  });
+  await setViewport(client, 1365, 900, false);
   return client;
+}
+
+async function setViewport(client, width, height, mobile = false) {
+  await client.send('Emulation.setDeviceMetricsOverride', {
+    width,
+    height,
+    deviceScaleFactor: 1,
+    mobile
+  });
+  await delay(250);
 }
 
 async function evaluate(client, expression) {
@@ -142,6 +165,71 @@ async function clickByText(client, text) {
 
   if (!clicked) throw new Error(`Could not click: ${text}`);
   await delay(350);
+}
+
+async function clickFirstMemberSummary(client) {
+  const clicked = await evaluate(client, `
+    (() => {
+      const target = document.querySelector('.member-summary');
+      if (!target) return false;
+      target.click();
+      return true;
+    })()
+  `);
+
+  if (!clicked) throw new Error('Could not click first member summary');
+  await delay(350);
+}
+
+async function clickFirstRankingToggle(client) {
+  const clicked = await evaluate(client, `
+    (() => {
+      const target = document.querySelector('.ranking-toggle');
+      if (!target) return false;
+      target.click();
+      return true;
+    })()
+  `);
+
+  if (!clicked) throw new Error('Could not click first ranking toggle');
+  await delay(350);
+}
+
+async function clickFirstOptionCard(client) {
+  const clicked = await evaluate(client, `
+    (() => {
+      const target = document.querySelector('.option-card');
+      if (!target) return false;
+      target.click();
+      return true;
+    })()
+  `);
+
+  if (!clicked) throw new Error('Could not click first option card');
+  await delay(350);
+}
+
+async function getFirstRecordId(client) {
+  const recordId = await evaluate(client, `document.querySelector('.record-header[data-record-id]')?.dataset.recordId || ''`);
+  if (!recordId) throw new Error('Could not find first record id');
+  return recordId;
+}
+
+async function assertTextAbsent(client, text) {
+  const exists = await evaluate(client, `
+    ((document.body && document.body.innerText) || '').includes(${JSON.stringify(text)})
+  `);
+  if (exists) throw new Error(`Unexpected text found: ${text}`);
+}
+
+async function assertAtTop(client) {
+  const scrollY = await evaluate(client, 'Math.round(window.scrollY || document.documentElement.scrollTop || 0)');
+  if (scrollY !== 0) throw new Error(`Expected screen top, got scrollY=${scrollY}`);
+}
+
+async function assertSelector(client, selector) {
+  const exists = await evaluate(client, `Boolean(document.querySelector(${JSON.stringify(selector)}))`);
+  if (!exists) throw new Error(`Missing selector: ${selector}`);
 }
 
 async function selectMethod(client, method) {
@@ -204,23 +292,28 @@ async function capture(client, name) {
 
 async function resetApp(client) {
   await client.send('Page.navigate', { url: appUrl });
-  await waitForText(client, 'ParkBuddy Web');
+  await waitForText(client, '라운딩 시작하기');
   await evaluate(client, 'window.alert = () => {}; window.confirm = () => true; true');
   await delay(500);
 }
 
 async function runMainFlow(client) {
   await resetApp(client);
+  await assertTextAbsent(client, 'Supabase');
   await capture(client, '01-home');
 
-  await clickByText(client, '회원 등록 및 관리');
+  await clickByText(client, '등록 회원');
   await waitForText(client, '회원 등록 및 관리');
+  await assertAtTop(client);
   await capture(client, '02-members');
+  await clickFirstMemberSummary(client);
+  await waitForText(client, '핸디');
+  await capture(client, '02-members-expanded');
 
-  await clickByText(client, '홈');
-  await waitForText(client, 'ParkBuddy Web');
+  await resetApp(client);
   await clickByText(client, '라운딩 시작하기');
   await waitForText(client, '라운딩 생성');
+  await assertAtTop(client);
   await capture(client, '03-round-create-stroke');
 
   await clickByText(client, '참가자 선택으로 이동');
@@ -232,52 +325,92 @@ async function runMainFlow(client) {
   await waitForText(client, '조편성 결과');
   await capture(client, '05-team-result-individual');
 
-  await clickByText(client, '점수 입력으로 이동');
+  await clickByText(client, '라운딩 기록 생성');
+  await waitForText(client, '라운딩 기록 보기');
+  await waitForText(client, '점수 미입력');
+  await waitForText(client, '조편성/점수 링크 공유');
+  await capture(client, '06-record-pending');
+
+  await clickByText(client, '점수 입력');
   await waitForText(client, '점수 입력');
-  await capture(client, '06-score-input');
+  await capture(client, '07-score-input');
 
   await clickByText(client, '순위표 보기');
   await waitForText(client, '순위표');
-  await capture(client, '07-ranking');
+  await capture(client, '08-ranking');
 
-  await clickByText(client, '기록 저장 후 처음으로');
-  await waitForText(client, 'ParkBuddy Web');
-  await clickByText(client, '라운딩 기록 보기');
+  await clickByText(client, '기록에 점수 저장');
   await waitForText(client, '라운딩 기록 보기');
-  await capture(client, '08-records');
+  await assertTextAbsent(client, '상세보기');
+  await waitForText(client, '조편성/점수 링크 공유');
+  await capture(client, '09-records');
+  await setFieldValue(client, '라운딩명', '정기');
+  await waitForText(client, '정기 라운딩');
+  await capture(client, '09-records-search');
 
-  await clickByText(client, '상세보기');
+  await clickFirstRankingToggle(client);
   await waitForText(client, '전체 순위');
-  await capture(client, '08-records-detail');
+  await capture(client, '09-records-detail');
+  await clickFirstRankingToggle(client);
+  await assertTextAbsent(client, '전체 순위');
+  await capture(client, '09-records-collapsed');
+
+  const recordId = await getFirstRecordId(client);
+  await client.send('Page.navigate', { url: `${appUrl}?recordId=${encodeURIComponent(recordId)}` });
+  await waitForText(client, '내 이름 또는 팀 선택');
+  await evaluate(client, 'window.alert = () => {}; window.confirm = () => true; true');
+  await capture(client, '09-shared-score-select');
+  await clickFirstOptionCard(client);
+  await waitForText(client, '점수 저장');
+  await capture(client, '09-shared-score-entry');
+  await clickByText(client, '점수 저장');
+  await waitForText(client, '현재 순위');
+  await capture(client, '09-shared-score-saved');
+
+  await resetApp(client);
+  await clickByText(client, '라운딩 기록');
+  await waitForText(client, '라운딩 기록 보기');
+  await setViewport(client, 545, 768, true);
+  await capture(client, '09-records-mobile');
+  await resetApp(client);
+  await clickByText(client, '등록 회원');
+  await waitForText(client, '회원 등록 및 관리');
+  await clickFirstMemberSummary(client);
+  await waitForText(client, '핸디');
+  await capture(client, '02-members-mobile-expanded');
+  await setViewport(client, 1365, 900, false);
+
+  await resetApp(client);
+  await clickByText(client, '개인점수관리');
+  await waitForText(client, '기록 추이');
+  await assertSelector(client, '.trend-chart svg');
+  await capture(client, '10-personal-scores');
+
+  await evaluate(client, 'history.back(); true');
+  await waitForText(client, 'ParkBuddy Web');
+  await assertAtTop(client);
+  await capture(client, '10-browser-back-home');
 }
 
 async function goHomeOrReset(client) {
-  const canGoHome = await evaluate(client, `
-    [...document.querySelectorAll('button, .btn, label.btn')].some(element => element.innerText.includes('홈'))
-  `);
-  if (!canGoHome) {
-    await resetApp(client);
-    return;
-  }
-  await clickByText(client, '홈');
-  await waitForText(client, 'ParkBuddy Web');
+  await resetApp(client);
 }
 
 async function runCourseFlow(client) {
   await goHomeOrReset(client);
   await clickByText(client, '구장 관리');
   await waitForText(client, '구장 관리');
-  await capture(client, '09-courses');
+  await capture(client, '11-courses');
 
   const courseName = `검증 파크골프장 ${Date.now()}`;
   await setFieldValue(client, '구장 이름', courseName);
   await clickByText(client, '구장 추가');
   await waitForText(client, courseName);
-  await capture(client, '10-courses-added');
+  await capture(client, '12-courses-added');
 
   await clickByText(client, '삭제');
   await waitForText(client, '사용자 구장 등록');
-  await capture(client, '11-courses-deleted');
+  await capture(client, '13-courses-deleted');
 }
 
 async function runMethodFlow(client, method, prefix) {
@@ -296,7 +429,9 @@ async function runMethodFlow(client, method, prefix) {
   await waitForText(client, '조편성 결과');
   await capture(client, `${prefix}-team-result-${method}`);
 
-  await clickByText(client, '점수 입력으로 이동');
+  await clickByText(client, '라운딩 기록 생성');
+  await waitForText(client, '라운딩 기록 보기');
+  await clickByText(client, '점수 입력');
   await waitForText(client, '점수 입력');
   await capture(client, `${prefix}-score-input-${method}`);
 
@@ -309,12 +444,16 @@ async function main() {
   if (!existsSync(captureDir)) mkdirSync(captureDir, { recursive: true });
   if (existsSync(chromeProfileDir)) rmSync(chromeProfileDir, { recursive: true, force: true });
 
+  const appPort = await findAvailablePort(5173);
+  appUrl = `http://127.0.0.1:${appPort}`;
+
   const vite = startProcess('C:\\Program Files\\nodejs\\node.exe', [
     join(process.cwd(), 'node_modules\\vite\\bin\\vite.js'),
     '--host',
     '127.0.0.1',
     '--port',
-    '5173'
+    String(appPort),
+    '--strictPort'
   ], { log: true });
   const chrome = startProcess(chromePath, [
     '--headless=new',

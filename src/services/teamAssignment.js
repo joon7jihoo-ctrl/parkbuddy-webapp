@@ -537,7 +537,10 @@ function getTotalSkillScore(members, context) {
 }
 
 function getIndividualTeamCount(participantCount, teamSize = DEFAULT_TEAM_SIZE) {
-  return Math.max(1, Math.ceil(participantCount / Math.max(1, teamSize || DEFAULT_TEAM_SIZE)));
+  const preferredSize = Math.max(3, teamSize || DEFAULT_TEAM_SIZE);
+  const maxGroupCountWithMinimumSize = Math.max(1, Math.floor(participantCount / 3));
+  const preferredGroupCount = Math.max(1, Math.ceil(participantCount / preferredSize));
+  return Math.min(maxGroupCountWithMinimumSize, preferredGroupCount);
 }
 
 function getTeamLabel(index) {
