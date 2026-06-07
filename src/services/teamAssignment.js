@@ -12,6 +12,7 @@ export const TEAM_ASSIGNMENT_MODES = {
   RANDOM: 'random',
   BALANCED: 'balanced',
   LEADER: 'leader',
+  CUSTOM: 'custom',
   BALANCED_OVERLAP: 'balanced-overlap',
   FOURSOME: 'foursome',
   FOURBALL: 'fourball',
@@ -167,10 +168,32 @@ export function createTeamAssignment(participants, options = {}) {
     return createLeaderBasedIndividualTeams(participants, options);
   }
 
+  if (mode === TEAM_ASSIGNMENT_MODES.CUSTOM) {
+    return createCustomIndividualTeams(participants, options);
+  }
+
   const overlapOptions = mode === TEAM_ASSIGNMENT_MODES.BALANCED_OVERLAP
     ? options
     : { ...options, previousRoundTeams: [] };
   return createBalancedIndividualTeams(participants, overlapOptions);
+}
+
+function createCustomIndividualTeams(participants, options = {}) {
+  const context = createSkillContext(participants, options.statsByMember);
+  const groupsByNumber = participants.reduce((groups, member) => {
+    const groupNumber = Math.max(1, Math.round(Number(member.manualTeamNumber || member.customTeamNumber || 1)));
+    return {
+      ...groups,
+      [groupNumber]: [...(groups[groupNumber] || []), member]
+    };
+  }, {});
+
+  return Object.entries(groupsByNumber)
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .map(([groupNumber, members], index) => ({
+      ...buildIndividualGroup(members, index, options, context),
+      name: `${groupNumber}조`
+    }));
 }
 
 export function flattenGroupMembers(group) {
@@ -517,14 +540,12 @@ function getMemberStat(stats, memberId) {
 
 function selectLeader(members, selectedLeaders = []) {
   const selectedLeaderIds = new Set(selectedLeaders.map(leader => leader.id));
-  return members.find(member => selectedLeaderIds.has(member.id))
-    || members.find(member => member.isLeaderCandidate)
-    || null;
+  return members.find(member => selectedLeaderIds.has(member.id)) || null;
 }
 
 function countLeaderCandidates(members, selectedLeaders = []) {
   const selectedLeaderIds = new Set(selectedLeaders.map(leader => leader.id));
-  return members.filter(member => selectedLeaderIds.has(member.id) || member.isLeaderCandidate).length;
+  return members.filter(member => selectedLeaderIds.has(member.id)).length;
 }
 
 function getAverageSkillScore(members, context) {

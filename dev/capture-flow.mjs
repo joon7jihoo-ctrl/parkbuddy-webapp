@@ -167,6 +167,21 @@ async function clickByText(client, text) {
   await delay(350);
 }
 
+async function clickByTextIfPresent(client, text) {
+  const clicked = await evaluate(client, `
+    (() => {
+      const target = [...document.querySelectorAll('button, .btn, label.btn')]
+        .find(element => element.innerText.includes(${JSON.stringify(text)}));
+      if (!target) return false;
+      target.click();
+      return true;
+    })()
+  `);
+
+  if (clicked) await delay(350);
+  return clicked;
+}
+
 async function clickFirstMemberSummary(client) {
   const clicked = await evaluate(client, `
     (() => {
@@ -292,7 +307,7 @@ async function capture(client, name) {
 
 async function resetApp(client) {
   await client.send('Page.navigate', { url: appUrl });
-  await waitForText(client, '오늘 라운딩 시작');
+  await waitForText(client, '라운딩 시작');
   await evaluate(client, 'window.alert = () => {}; window.confirm = () => true; true');
   await delay(500);
 }
@@ -311,9 +326,12 @@ async function runMainFlow(client) {
   await capture(client, '02-members-expanded');
 
   await resetApp(client);
-  await clickByText(client, '오늘 라운딩 시작');
+  await clickByText(client, '라운딩 시작');
   await waitForText(client, '라운딩 생성');
   await assertAtTop(client);
+  await capture(client, '03-round-create-basic');
+  await clickByText(client, '경기 설정으로 이동');
+  await waitForText(client, '경기 설정');
   await capture(client, '03-round-create-stroke');
 
   await clickByText(client, '참가자 선택으로 이동');
@@ -321,20 +339,26 @@ async function runMainFlow(client) {
   await selectAllMembers(client);
   await capture(client, '04-member-select-stroke');
 
+  await clickByText(client, '편성 방식 선택');
+  await waitForText(client, '조편성 방식');
+  await capture(client, '04-member-select-mode');
+  await clickByText(client, '조당 인원 선택');
+  await waitForText(client, '조당 인원');
+  await capture(client, '04-member-select-size');
   await clickByText(client, '조편성하기');
   await waitForText(client, '오늘의 베스트 조');
   await capture(client, '05-team-result-individual');
 
   await clickByText(client, '라운딩 기록 생성');
-  await waitForText(client, 'ParkBuddy Performance Club');
-  await clickByText(client, '누적 라운드');
+  await waitForText(client, '오늘의 라운드가');
+  await clickByText(client, '라운딩 기록');
   await waitForText(client, '라운딩 기록 보기');
   await waitForText(client, '점수 미입력');
   await waitForText(client, '조편성/점수 링크 공유');
   await capture(client, '06-record-pending');
 
   await clickByText(client, '점수 입력');
-  await waitForText(client, 'LIVE SCOREBOARD');
+  await waitForText(client, '실시간 점수판');
   await capture(client, '07-score-input');
 
   await clickByText(client, '순위표 보기');
@@ -370,7 +394,7 @@ async function runMainFlow(client) {
   await capture(client, '09-shared-score-saved');
 
   await resetApp(client);
-  await clickByText(client, '누적 라운드');
+  await clickByText(client, '라운딩 기록');
   await waitForText(client, '라운딩 기록 보기');
   await setViewport(client, 545, 768, true);
   await capture(client, '09-records-mobile');
@@ -383,13 +407,13 @@ async function runMainFlow(client) {
   await setViewport(client, 1365, 900, false);
 
   await resetApp(client);
-  await clickByText(client, '성장 데이터 보기');
+  await clickByText(client, '성장 데이터');
   await waitForText(client, '기록 추이');
   await assertSelector(client, '.trend-chart svg');
   await capture(client, '10-personal-scores');
 
   await evaluate(client, 'history.back(); true');
-  await waitForText(client, 'ParkBuddy Performance Club');
+  await waitForText(client, '오늘의 라운드가');
   await assertAtTop(client);
   await capture(client, '10-browser-back-home');
 }
@@ -417,8 +441,10 @@ async function runCourseFlow(client) {
 
 async function runMethodFlow(client, method, prefix) {
   await goHomeOrReset(client);
-  await clickByText(client, '오늘 라운딩 시작');
+  await clickByText(client, '라운딩 시작');
   await waitForText(client, '라운딩 생성');
+  await clickByText(client, '경기 설정으로 이동');
+  await waitForText(client, '경기 설정');
   await selectMethod(client, method);
   await capture(client, `${prefix}-round-create-${method}`);
 
@@ -427,16 +453,20 @@ async function runMethodFlow(client, method, prefix) {
   await selectAllMembers(client);
   await capture(client, `${prefix}-member-select-${method}`);
 
+  await clickByText(client, '편성 방식 선택');
+  if (await clickByTextIfPresent(client, '조당 인원 선택')) {
+    await waitForText(client, '조당 인원');
+  }
   await clickByText(client, '조편성하기');
   await waitForText(client, '오늘의 베스트 조');
   await capture(client, `${prefix}-team-result-${method}`);
 
   await clickByText(client, '라운딩 기록 생성');
-  await waitForText(client, 'ParkBuddy Performance Club');
-  await clickByText(client, '누적 라운드');
+  await waitForText(client, '오늘의 라운드가');
+  await clickByText(client, '라운딩 기록');
   await waitForText(client, '라운딩 기록 보기');
   await clickByText(client, '점수 입력');
-  await waitForText(client, 'LIVE SCOREBOARD');
+  await waitForText(client, '실시간 점수판');
   await capture(client, `${prefix}-score-input-${method}`);
 
   await clickByText(client, '순위표 보기');

@@ -544,3 +544,31 @@ Supabase 저장 구조와 앱의 시각 방향을 다음 단계 플랫폼 구조
 - `npm.cmd run build` 통과
 - `dev/capture-flow.mjs` 자동 브라우저 검증 통과
 - Supabase REST 확인: `parkbuddy_members`는 아직 원격 DB에 없어 `schema.sql` 실행 필요
+
+## 30. 2026-06-07 한글 UI, 모바일 흐름, 사용자 지정 편성 보강
+
+대한민국 사용자에게 맞춘 한글 중심 UI와 모바일 라운딩 운영 흐름을 보완했습니다.
+
+- 홈 화면 노출 문구를 한글 중심으로 정리하고, 상단 클럽 문구를 저장된 동호회명으로 표시하도록 변경했습니다.
+- 홈 하단의 중복 메뉴를 제거하고 등록 회원/라운딩 기록 카드를 주요 진입점으로 유지했습니다.
+- `Rounds`와 `Active players` 혼선을 줄이기 위해 홈 지표는 등록 회원과 라운딩 기록 2개로 정리했습니다.
+- 라운딩 생성 화면을 기본 정보 입력과 경기 설정 단계로 분리했습니다.
+- 코스별 기준파 입력은 9홀 카드가 2줄로 보이도록 조정하고, 각 코스 합계가 36타가 아니면 해당 코스를 안내하는 검증을 추가했습니다.
+- 모바일 숫자 키패드 입력 시 기준파가 12로 고정되는 문제를 raw 입력 방식으로 수정했습니다.
+- 참가자 선택 화면은 참가자 선택, 편성 방식 선택, 조당 인원 선택 단계로 분리했습니다.
+- `사용자 지정 편성`을 추가하고, 회원별 조 번호 입력값이 결과 조 번호로 유지되도록 했습니다.
+- 조장은 후보 여부와 관계없이 선택할 수 있고, 직접 선택한 사람만 편성표에서 조장으로 표시되도록 수정했습니다.
+- `조편성하기` 실행 버튼은 화면 하단에 고정했습니다.
+- 공유 점수 입력 화면의 남은 영어 표기를 한글로 변경했습니다.
+- 다크모드에서 숫자, 옵션 제목, 요약 카드 텍스트가 보이지 않는 문제를 보정했습니다.
+- 개인점수관리 화면에 최근 5라운드 평균, 최근 성장 폭, 베스트 배지, 코스별 강약 분석을 추가했습니다.
+- 공유 카드 PNG 저장 기능을 추가해 라운딩 결과를 이미지로 내보낼 수 있도록 했습니다.
+- 라운딩 기록 화면에 실시간 순위 동기화 안내를 추가했습니다.
+- 평가분석보고서를 취약점 및 UI/UX 정밀 분석, Quick Win, 장기 과제 기준으로 다시 작성했습니다.
+
+검증 결과:
+
+- `npm.cmd run build` 통과
+- `dev/capture-flow.mjs` 자동 브라우저 검증 통과
+- 캡처 확인: `C:\Capture\01-home.png`, `C:\Capture\03-round-create-stroke.png`, `C:\Capture\04-member-select-mode.png`, `C:\Capture\09-records-mobile.png`, `C:\Capture\09-shared-score-entry.png`, `C:\Capture\10-personal-scores.png`
+- Supabase REST 확인: `parkbuddy_app_state`, `parkbuddy_members`, `parkbuddy_rounds`, `parkbuddy_round_scores`, `parkbuddy_round_rankings`, `parkbuddy_app_settings` 모두 200 응답

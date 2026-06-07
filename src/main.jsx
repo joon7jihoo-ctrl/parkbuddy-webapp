@@ -25,15 +25,16 @@ const GAME_METHODS = ['스트로크 플레이', '신페리오', '매치 플레�
 const TEAM_SCORE_METHODS = new Set(['스크램블', '포섬', '포볼']);
 const BACK_COUNT_HOLE_COUNTS = [9, 6, 3, 1];
 const INDIVIDUAL_ASSIGNMENT_OPTIONS = [
-  { value: TEAM_ASSIGNMENT_MODES.BALANCED, label: 'Buddy Balance', description: '오늘은 실력 차이가 튀지 않도록 조를 고르게 맞춰볼게요.' },
-  { value: TEAM_ASSIGNMENT_MODES.BALANCED_OVERLAP, label: 'Buddy AI 추천', description: '실력 밸런스와 지난 조합 중복을 함께 줄여 가장 자연스러운 조를 찾습니다.' },
-  { value: TEAM_ASSIGNMENT_MODES.LEADER, label: 'Captain Mix', description: '조장 후보를 각 조에 분산해 라운드 운영을 안정적으로 만듭니다.' },
-  { value: TEAM_ASSIGNMENT_MODES.RANDOM, label: 'Random Mix', description: '오늘은 가볍게 랜덤 믹스로 분위기를 바꿔볼게요.' }
+  { value: TEAM_ASSIGNMENT_MODES.BALANCED, label: '실력 균형', description: '오늘은 실력 차이가 튀지 않도록 조를 고르게 맞춥니다.' },
+  { value: TEAM_ASSIGNMENT_MODES.BALANCED_OVERLAP, label: '실력 균형 + 중복 최소화', description: '실력 밸런스와 지난 조합 중복을 함께 줄입니다.' },
+  { value: TEAM_ASSIGNMENT_MODES.LEADER, label: '조장 분산', description: '선택한 조장을 각 조에 분산해 라운드 운영을 안정적으로 만듭니다.' },
+  { value: TEAM_ASSIGNMENT_MODES.RANDOM, label: '무작위 편성', description: '참가자를 무작위로 섞어 편성합니다.' },
+  { value: TEAM_ASSIGNMENT_MODES.CUSTOM, label: '사용자 지정 편성', description: '운영자가 회원별 조 번호를 직접 입력해 편성합니다.' }
 ];
 const TEAM_ASSIGNMENT_OPTIONS = [
-  { value: TEAM_ASSIGNMENT_MODES.FOURSOME, label: 'Foursome AI', description: '비슷한 실력의 2인 팀을 만들어 호흡을 맞춥니다.' },
-  { value: TEAM_ASSIGNMENT_MODES.FOURBALL, label: 'Four-ball Balance', description: '강자와 약자를 짝지어 팀 전력을 균형 있게 맞춥니다.' },
-  { value: TEAM_ASSIGNMENT_MODES.TEAM_OVERLAP, label: 'Team Buddy AI', description: '팀 실력과 직전 조 중복을 함께 보고 매치업을 추천합니다.' }
+  { value: TEAM_ASSIGNMENT_MODES.FOURSOME, label: '포섬 실력 균형', description: '비슷한 실력의 2인 팀을 만들어 호흡을 맞춥니다.' },
+  { value: TEAM_ASSIGNMENT_MODES.FOURBALL, label: '포볼 전력 균형', description: '강자와 약자를 짝지어 팀 전력을 균형 있게 맞춥니다.' },
+  { value: TEAM_ASSIGNMENT_MODES.TEAM_OVERLAP, label: '팀전 중복 최소화', description: '팀 실력과 직전 조 중복을 함께 보고 매치업을 추천합니다.' }
 ];
 const PROVINCES = [
   '서울특별시', '부산광역시', '대구광역시', '인천광역시', '광주광역시', '대전광역시', '울산광역시',
@@ -154,7 +155,7 @@ function buildRoundShareText(record) {
   const round = record.round || {};
   const teamLines = (record.teams || []).map(team => `${team.name}: ${formatTeamMembers(team)}`);
   return [
-    `[ParkBuddy] ${round.title || '라운딩'} 조편성 결과`,
+    `[파크버디] ${round.title || '라운딩'} 조편성 결과`,
     `${round.date || ''} · ${round.place || ''}`,
     `${round.holes || ''}홀 · ${round.method || ''}`,
     '',
@@ -278,7 +279,7 @@ function getCourseLabel(courseIndex) {
 }
 
 function getCourseHoleLabel(holeIndex) {
-  return `${getCourseLabel(Math.floor(holeIndex / COURSE_HOLE_COUNT))} ${holeIndex % COURSE_HOLE_COUNT + 1}H`;
+  return `${getCourseLabel(Math.floor(holeIndex / COURSE_HOLE_COUNT))} ${holeIndex % COURSE_HOLE_COUNT + 1}홀`;
 }
 
 function getCourseGroups(values = []) {
@@ -929,7 +930,8 @@ function getTeamSizePattern(participantCount = 0, teamCount = 0, teams = []) {
 
 function buildBuddyInsight(participantCount, teamCount, assignmentMode, isTeamMatch) {
   const pattern = getTeamSizePattern(participantCount, teamCount);
-  if (isTeamMatch) return `Buddy AI가 ${teamCount}개 매치업으로 팀 전력과 조합을 맞췄어요.`;
+  if (isTeamMatch) return `편성 도우미가 ${teamCount}개 매치업으로 팀 전력과 조합을 맞췄습니다.`;
+  if (assignmentMode === TEAM_ASSIGNMENT_MODES.CUSTOM) return '운영자가 입력한 조 번호와 선택한 조장을 기준으로 편성했습니다.';
   if (participantCount % 4 !== 0 && pattern) return `${participantCount}명은 ${pattern} 구조가 가장 안정적이에요. 3인 조도 불리하지 않게 밸런스를 보정했습니다.`;
   if (assignmentMode === TEAM_ASSIGNMENT_MODES.BALANCED_OVERLAP) return '실력 밸런스와 직전 조 중복을 함께 줄인 추천 편성이에요.';
   if (assignmentMode === TEAM_ASSIGNMENT_MODES.LEADER) return '조장 후보를 고르게 배치해 각 조의 운영 안정감을 높였어요.';
@@ -938,17 +940,104 @@ function buildBuddyInsight(participantCount, teamCount, assignmentMode, isTeamMa
 
 function buildResultShareText(round, rankings, totalPar) {
   const winner = rankings[0];
-  const topLines = rankings.slice(0, 3).map(result => `#${result.rank} ${getRankingDisplayName(result)} · ${formatScoreDiff(Number(result.total || 0) - totalPar)} TO PAR`);
+  const topLines = rankings.slice(0, 3).map(result => `${result.rank}위 ${getRankingDisplayName(result)} · 기준파 대비 ${formatScoreDiff(Number(result.total || 0) - totalPar)}`);
   return [
-    'PARKBUDDY ROUND CARD',
+    '파크버디 라운딩 카드',
     `${round.title || '오늘의 라운드'} · ${round.place || ''}`,
-    `${round.date || ''} · ${round.holes || ''}H`,
+    `${round.date || ''} · ${round.holes || ''}홀`,
     '',
-    winner ? `WINNER ${getRankingDisplayName(winner)} · ${formatScoreDiff(Number(winner.total || 0) - totalPar)}` : '',
+    winner ? `1위 ${getRankingDisplayName(winner)} · 기준파 대비 ${formatScoreDiff(Number(winner.total || 0) - totalPar)}` : '',
     ...topLines,
     '',
     '오늘의 라운드가, 나의 기록이 된다.'
   ].filter(Boolean).join('\n');
+}
+
+function normalizeHoleParsForSubmit(rawPars = [], holeCount = 0) {
+  return Array.from({ length: holeCount }, (_, index) => {
+    const value = rawPars[index];
+    const number = Number(value);
+    return Number.isInteger(number) && number >= 1 && number <= 12 ? number : null;
+  });
+}
+
+function findCourseParIssues(rawPars = [], holeCount = 0) {
+  const normalizedPars = normalizeHoleParsForSubmit(rawPars, holeCount);
+  const invalidIndexes = normalizedPars
+    .map((value, index) => value === null ? index : null)
+    .filter(index => index !== null);
+
+  if (invalidIndexes.length > 0) {
+    const labels = invalidIndexes.map(index => getCourseHoleLabel(index)).join(', ');
+    return {
+      normalizedPars,
+      message: `${labels}의 규정타수를 1~12 사이 숫자로 입력해 주세요.`
+    };
+  }
+
+  const wrongCourse = getCourseGroups(normalizedPars).find(course => sumNumbers(course.holes.map(hole => hole.value)) !== 36);
+  if (wrongCourse) {
+    const courseTotal = sumNumbers(wrongCourse.holes.map(hole => hole.value));
+    return {
+      normalizedPars,
+      message: `${wrongCourse.label} 기준파 합계가 ${courseTotal}타입니다. 코스별 기준파는 36타가 되어야 합니다.`
+    };
+  }
+
+  return { normalizedPars, message: '' };
+}
+
+function downloadShareCardImage(round, rankings, totalPar) {
+  const winner = rankings[0];
+  const canvas = document.createElement('canvas');
+  canvas.width = 1080;
+  canvas.height = 1350;
+  const context = canvas.getContext('2d');
+  const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+  gradient.addColorStop(0, '#050a07');
+  gradient.addColorStop(0.62, '#0d2d1c');
+  gradient.addColorStop(1, '#17331f');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  context.fillStyle = '#b6ff3b';
+  context.fillRect(0, 0, canvas.width, 18);
+  context.fillStyle = '#f4fff7';
+  context.font = '700 46px sans-serif';
+  context.fillText('파크버디 라운딩 카드', 72, 118);
+  context.font = '900 72px sans-serif';
+  context.fillText(round.title || '오늘의 라운딩', 72, 230);
+  context.font = '500 36px sans-serif';
+  context.fillStyle = 'rgba(244,255,247,.78)';
+  context.fillText(`${round.date || ''} · ${round.place || ''} · ${round.holes || ''}홀`, 72, 294);
+
+  context.fillStyle = '#b6ff3b';
+  context.font = '900 150px sans-serif';
+  context.fillText(winner ? formatScoreDiff(Number(winner.total || 0) - totalPar) : '기록 대기', 72, 520);
+  context.fillStyle = '#f4fff7';
+  context.font = '900 68px sans-serif';
+  context.fillText(winner ? getRankingDisplayName(winner) : '라운딩을 시작하세요', 72, 610);
+
+  context.font = '700 38px sans-serif';
+  rankings.slice(0, 3).forEach((result, index) => {
+    const y = 760 + index * 124;
+    context.fillStyle = 'rgba(255,255,255,.08)';
+    context.fillRect(72, y - 62, 936, 92);
+    context.fillStyle = index === 0 ? '#b6ff3b' : '#f4fff7';
+    context.fillText(`${result.rank}위`, 108, y);
+    context.fillStyle = '#f4fff7';
+    context.fillText(getRankingDisplayName(result), 228, y);
+    context.fillStyle = 'rgba(244,255,247,.78)';
+    context.fillText(formatRankingDetail(result, round.method), 108, y + 48);
+  });
+
+  context.fillStyle = 'rgba(244,255,247,.66)';
+  context.font = '500 32px sans-serif';
+  context.fillText('오늘의 라운드가, 나의 기록이 된다.', 72, 1240);
+  const link = document.createElement('a');
+  link.download = `${createSafeFilename(round.title || 'parkbuddy-round-card')}.png`;
+  link.href = canvas.toDataURL('image/png');
+  link.click();
 }
 
 function getMemberScoreTrend(memberId, records = []) {
@@ -962,6 +1051,17 @@ function getMemberScoreTrend(memberId, records = []) {
     const totalPar = sumNumbers(holePars);
     const total = Number(result.total || 0);
     const scoreDiff = total - totalPar;
+    const scoreList = Array.isArray(result.scoreList) ? result.scoreList : [];
+    const courseDiffs = getCourseGroups(holePars).map(course => {
+      const courseScores = course.holes.map(hole => Number(scoreList[hole.index] ?? hole.value));
+      const coursePars = course.holes.map(hole => Number(hole.value || 0));
+      return {
+        label: course.label,
+        total: sumNumbers(courseScores),
+        par: sumNumbers(coursePars),
+        diff: sumNumbers(courseScores) - sumNumbers(coursePars)
+      };
+    });
 
     return [{
       id: `${record.id}-${result.id || result.member?.id || memberId}`,
@@ -978,6 +1078,8 @@ function getMemberScoreTrend(memberId, records = []) {
       finalScore: result.finalScore,
       points: result.points,
       matchPoints: result.matchPoints,
+      scoreList,
+      courseDiffs,
       isTeamResult: result.type === 'team' || (result.members || []).length > 1,
       membersText: getRankingMembersText(result)
     }];
@@ -1046,54 +1148,112 @@ function HomeScreen({ setScreen, members, records }) {
   const latestWinner = latestRecord?.rankings?.[0];
   const latestPar = latestRecord ? sumNumbers(getRoundHolePars(latestRecord.round)) : 0;
   const latestDiff = latestWinner ? Number(latestWinner.total || 0) - latestPar : null;
-  const totalPlayers = new Set(records.flatMap(record => (record.participants || []).map(member => member.id))).size;
+  const clubName = members.find(member => String(member.clubName || '').trim())?.clubName || DEFAULT_CLUB_NAME;
 
   return (
     <main className="page home sport-home">
       <div className="hero sport-hero">
-        <div>
-          <p className="eyebrow">ParkBuddy Performance Club</p>
-          <h1>오늘의 라운드가,<br />나의 기록이 된다.</h1>
-          <p>조편성, 라이브 스코어, 순위표, 개인 성장 데이터를 하나의 스포츠 플랫폼처럼 관리하세요.</p>
-          <div className="hero-actions">
-            <Button icon={Plus} onClick={() => setScreen('roundCreate')}>Start Round</Button>
-            <Button icon={Activity} onClick={() => setScreen('personalScores')} variant="glass">My Performance</Button>
-          </div>
+        <div className="hero-main-copy">
+          <p className="eyebrow">{clubName}</p>
+          <h1>오늘의 라운드가, 나의 기록이 된다.</h1>
+          <p>조편성, 실시간 점수, 순위표, 개인 성장 데이터를 한 곳에서 관리하세요.</p>
         </div>
-        <div className="hero-score-card" aria-label="최근 라운드 하이라이트">
-          <span>Latest Highlight</span>
-          <strong>{latestWinner ? formatScoreDiff(latestDiff) : 'READY'}</strong>
-          <small>{latestWinner ? `${getRankingDisplayName(latestWinner)} · ${latestRecord.round?.place || '최근 라운드'}` : '첫 라운드를 시작해 보세요'}</small>
+        <div className="hero-side-panel">
+          <div className="hero-score-card" aria-label="최근 라운드 하이라이트">
+            <span>최근 하이라이트</span>
+            <strong>{latestWinner ? formatScoreDiff(latestDiff) : '준비'}</strong>
+            <small>{latestWinner ? `${getRankingDisplayName(latestWinner)} · ${latestRecord.round?.place || '최근 라운드'}` : '첫 라운드를 시작해 보세요'}</small>
+          </div>
+          <div className="hero-actions">
+            <Button icon={Plus} onClick={() => setScreen('roundCreate')}>라운딩 시작</Button>
+            <Button icon={Activity} onClick={() => setScreen('personalScores')} variant="glass">성장 데이터</Button>
+          </div>
         </div>
       </div>
 
       <div className="stats home-stats performance-stats">
         <button className="card stat-link stat-card" onClick={() => setScreen('members')} aria-label="회원 등록 및 관리로 이동">
-          <span className="stat-label">Club Members</span>
+          <span className="stat-label">등록 회원</span>
           <strong>{members.length}</strong>
-          <span>등록 회원</span>
+          <span>회원 등록 및 관리</span>
         </button>
         <button className="card stat-link stat-card" onClick={() => setScreen('records')} aria-label="라운딩 기록 보기로 이동">
-          <span className="stat-label">Rounds</span>
+          <span className="stat-label">라운딩 기록</span>
           <strong>{records.length}</strong>
-          <span>누적 라운드</span>
-        </button>
-        <button className="card stat-link stat-card" onClick={() => setScreen('records')} aria-label="활동 선수 보기">
-          <span className="stat-label">Active Players</span>
-          <strong>{totalPlayers || members.length}</strong>
-          <span>기록 참여자</span>
+          <span>기록 보기 및 실시간 순위</span>
         </button>
       </div>
 
-      <Card title="Club Pulse" subtitle="라운딩을 시작하면 순위, 성장 추이, 공유 카드가 자동으로 쌓입니다." icon={Trophy}>
-        <div className="grid menu sport-menu">
-          <Button icon={Plus} onClick={() => setScreen('roundCreate')}>오늘 라운딩 시작</Button>
-          <Button icon={Activity} onClick={() => setScreen('personalScores')} variant="secondary">성장 데이터 보기</Button>
-          <Button icon={MapPin} onClick={() => setScreen('courses')} variant="secondary">구장 관리</Button>
-        </div>
-      </Card>
+      <button className="home-utility-link" onClick={() => setScreen('courses')}>
+        <MapPin size={18} />
+        구장 관리
+      </button>
     </main>
   );
+}
+
+function getRecentPerformanceSummary(series = []) {
+  const recent = series.slice(-5);
+  if (recent.length === 0) {
+    return {
+      recentAverageDiff: null,
+      improvement: null,
+      badge: '기록 대기'
+    };
+  }
+
+  const recentAverageDiff = sumNumbers(recent.map(item => item.scoreDiff)) / recent.length;
+  const improvement = recent.length > 1 ? recent[0].scoreDiff - recent[recent.length - 1].scoreDiff : null;
+  const bestDiff = Math.min(...series.map(item => item.scoreDiff));
+  const badge = bestDiff <= -3
+    ? '언더파 메이커'
+    : bestDiff <= 0
+      ? '파 세이버'
+      : recentAverageDiff <= 5
+        ? '안정권 진입'
+        : '성장 준비';
+
+  return {
+    recentAverageDiff,
+    improvement,
+    badge
+  };
+}
+
+function getCoursePerformanceSummary(series = []) {
+  const courseMap = new Map();
+  series.forEach(item => {
+    (item.courseDiffs || []).forEach(course => {
+      if (!courseMap.has(course.label)) {
+        courseMap.set(course.label, { label: course.label, count: 0, diffSum: 0 });
+      }
+      const current = courseMap.get(course.label);
+      current.count += 1;
+      current.diffSum += Number(course.diff || 0);
+    });
+  });
+
+  const courses = [...courseMap.values()]
+    .filter(course => course.count > 0)
+    .map(course => ({
+      ...course,
+      averageDiff: course.diffSum / course.count
+    }))
+    .sort((a, b) => a.averageDiff - b.averageDiff);
+
+  return {
+    best: courses[0] || null,
+    weakest: courses[courses.length - 1] || null,
+    courses
+  };
+}
+
+function formatImprovement(value) {
+  if (value === null || value === undefined) return '-';
+  const absValue = Math.abs(Number(value || 0)).toFixed(1);
+  if (Number(value) > 0) return `${absValue}타 개선`;
+  if (Number(value) < 0) return `${absValue}타 하락`;
+  return '변화 없음';
 }
 
 function MemberScreen({ members, memberStats, setMembers }) {
@@ -1375,6 +1535,8 @@ function PersonalScoreScreen({ members, records }) {
   const selectedMember = sortedMembers.find(member => member.id === selectedMemberId) || sortedMembers[0] || null;
   const series = useMemo(() => getMemberScoreTrend(selectedMember?.id, records), [selectedMember?.id, records]);
   const summary = getTrendSummary(series);
+  const recentSummary = getRecentPerformanceSummary(series);
+  const courseSummary = getCoursePerformanceSummary(series);
 
   React.useEffect(() => {
     if (!selectedMemberId && sortedMembers[0]?.id) setSelectedMemberId(sortedMembers[0].id);
@@ -1410,9 +1572,32 @@ function PersonalScoreScreen({ members, records }) {
             <Card><strong>{formatScoreDiff(summary.bestDiff)}</strong><span>최고 기록</span></Card>
           </div>
 
+          <div className="stats score-stats">
+            <Card><strong>{formatScoreDiff(recentSummary.recentAverageDiff ?? 0)}</strong><span>최근 5라운드 평균</span></Card>
+            <Card><strong>{formatImprovement(recentSummary.improvement)}</strong><span>최근 성장 폭</span></Card>
+            <Card><strong>{recentSummary.badge}</strong><span>베스트 배지</span></Card>
+          </div>
+
           <Card title={`${selectedMember.name} 기록 추이`} subtitle={`최근 기록 ${summary.latest.date} · ${formatScoreDiff(summary.latest.scoreDiff)} · 총타수 ${summary.latest.total}`} icon={Activity}>
             <TrendChart series={series} />
           </Card>
+
+          {courseSummary.courses.length > 0 && (
+            <Card title="코스별 강약" subtitle="낮은 기준파 대비 점수일수록 강한 코스입니다.">
+              <div className="course-strength-grid">
+                <div>
+                  <span>강한 코스</span>
+                  <strong>{courseSummary.best.label}</strong>
+                  <b>{formatScoreDiff(courseSummary.best.averageDiff)}</b>
+                </div>
+                <div>
+                  <span>보완 코스</span>
+                  <strong>{courseSummary.weakest.label}</strong>
+                  <b>{formatScoreDiff(courseSummary.weakest.averageDiff)}</b>
+                </div>
+              </div>
+            </Card>
+          )}
 
           <Card title="라운딩별 기록">
             <div className="score-history">
@@ -1439,6 +1624,7 @@ function PersonalScoreScreen({ members, records }) {
 
 function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces, customPlaces = [] }) {
   const [province, setProvince] = useState('전라남도');
+  const [step, setStep] = useState('basic');
   const [round, setLocalRound] = useState({
     title: '정기 라운딩',
     date: getTodayDateInputValue(),
@@ -1478,8 +1664,9 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces,
 
   const updateHolePar = (index, value) => {
     setLocalRound(prev => {
-      const nextHolePars = createDefaultHolePars(prev.holes, prev.holePars);
-      nextHolePars[index] = sanitizeHolePar(value);
+      const nextHolePars = [...(prev.holePars || createDefaultHolePars(prev.holes))];
+      const digits = String(value || '').replace(/\D/g, '').slice(0, 2);
+      nextHolePars[index] = digits;
       return { ...prev, holePars: nextHolePars };
     });
   };
@@ -1496,11 +1683,23 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces,
     });
   };
 
+  const goSettings = () => {
+    if (!round.title.trim()) return setError('라운딩 제목을 입력해 주세요.');
+    if (!round.date.trim()) return setError('날짜를 입력해 주세요.');
+    if (!round.place.trim()) return setError('파크골프장을 입력해 주세요.');
+    setError('');
+    setStep('settings');
+  };
+
   const submit = () => {
     if (!round.title.trim()) return setError('라운딩 제목을 입력해 주세요.');
     if (!round.date.trim()) return setError('날짜를 입력해 주세요.');
     if (round.place.trim()) setRecentPlaces(prev => [round.place.trim(), ...prev.filter(p => p !== round.place.trim())].slice(0, 10));
-    const normalizedHolePars = getRoundHolePars(round);
+    const { normalizedPars: normalizedHolePars, message: parError } = findCourseParIssues(round.holePars, round.holes);
+    if (parError) {
+      alert(parError);
+      return setError(parError);
+    }
     let hiddenHoleIndexes = [];
     if (round.method === '신페리오') {
       if (round.hiddenHoleMode === 'manual') {
@@ -1537,57 +1736,68 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces,
     <main className="page round-page">
       <header className="topbar">
         <h1>라운딩 생성</h1>
-        <p>라운딩 기본 정보를 입력하고 참가자를 선택하세요.</p>
+        <p>{step === 'basic' ? '라운딩 기본 정보를 입력하세요.' : '경기 방식과 코스별 기준파를 설정하세요.'}</p>
       </header>
 
       <div className="scroll-area">
-        <Card title="라운딩 기본 정보" icon={CalendarDays}>
-          <div className="form-grid single">
-            <Field label="라운딩 제목" required><input value={round.title} onChange={e => setLocalRound({ ...round, title: e.target.value })} /></Field>
-            <Field label="날짜" required><input type="date" value={round.date} onChange={e => setLocalRound({ ...round, date: e.target.value })} /></Field>
-            <Field label="행정구역">
-              <select value={province} onChange={e => { setProvince(e.target.value); setLocalRound({ ...round, place: PARK_GOLF_PLACES[e.target.value]?.[0] || '' }); }}>
-                {PROVINCES.map(p => <option key={p}>{p}</option>)}
-              </select>
-            </Field>
-            <Field label="파크골프장 선택 또는 직접 입력">
-              <input list="places" value={round.place} onChange={e => setLocalRound({ ...round, place: e.target.value })} />
-              <datalist id="places">{places.map(p => <option key={p} value={p} />)}</datalist>
-            </Field>
-            <Field label="메모"><textarea value={round.memo} onChange={e => setLocalRound({ ...round, memo: e.target.value })} rows={3} /></Field>
-          </div>
-        </Card>
-
-        <Card title="경기 설정" icon={Trophy}>
-          <Field label="기본 홀 수">
-            <div className="chip-row">{HOLE_OPTIONS.map(h => <button key={h} className={round.holes === h ? 'chip active' : 'chip'} onClick={() => changeHoleCount(h)}>{h}홀</button>)}</div>
-          </Field>
-          <Field label="점수/경기 방식">
-            <select value={round.method} onChange={e => setLocalRound({ ...round, method: e.target.value })}>
-              {GAME_METHODS.map(m => <option key={m}>{m}</option>)}
-            </select>
-          </Field>
-          <div className="field">
-            <span>홀별 규정타수 · 기준파 {totalPar}</span>
-            <div className="course-input-list">
-              {getCourseGroups(holePars).map(course => (
-                <section className="course-input-card" key={course.label}>
-                  <h3>{course.label}</h3>
-                  <div className="par-grid">
-                    {course.holes.map(hole => (
-                      <label key={hole.index}>
-                        <span>{hole.number}H</span>
-                        <input type="number" min="1" max="12" value={hole.value} onChange={e => updateHolePar(hole.index, e.target.value)} />
-                      </label>
-                    ))}
-                  </div>
-                </section>
-              ))}
+        {step === 'basic' && (
+          <Card title="라운딩 기본 정보" icon={CalendarDays}>
+            <div className="form-grid single">
+              <Field label="라운딩 제목" required><input value={round.title} onChange={e => setLocalRound({ ...round, title: e.target.value })} /></Field>
+              <Field label="날짜" required><input type="date" value={round.date} onChange={e => setLocalRound({ ...round, date: e.target.value })} /></Field>
+              <Field label="행정구역">
+                <select value={province} onChange={e => { setProvince(e.target.value); setLocalRound({ ...round, place: PARK_GOLF_PLACES[e.target.value]?.[0] || '' }); }}>
+                  {PROVINCES.map(p => <option key={p}>{p}</option>)}
+                </select>
+              </Field>
+              <Field label="파크골프장 선택 또는 직접 입력">
+                <input list="places" value={round.place} onChange={e => setLocalRound({ ...round, place: e.target.value })} />
+                <datalist id="places">{places.map(p => <option key={p} value={p} />)}</datalist>
+              </Field>
+              <Field label="메모"><textarea value={round.memo} onChange={e => setLocalRound({ ...round, memo: e.target.value })} rows={2} /></Field>
             </div>
-          </div>
-        </Card>
+          </Card>
+        )}
 
-        {round.method === '신페리오' && (
+        {step === 'settings' && (
+          <>
+            <Card title="경기 설정" icon={Trophy}>
+              <Field label="기본 홀 수">
+                <div className="chip-row">{HOLE_OPTIONS.map(h => <button key={h} className={round.holes === h ? 'chip active' : 'chip'} onClick={() => changeHoleCount(h)}>{h}홀</button>)}</div>
+              </Field>
+              <Field label="점수/경기 방식">
+                <select value={round.method} onChange={e => setLocalRound({ ...round, method: e.target.value })}>
+                  {GAME_METHODS.map(m => <option key={m}>{m}</option>)}
+                </select>
+              </Field>
+              <div className="field">
+                <span>코스별 규정타수 · 전체 기준파 {totalPar}</span>
+                <div className="course-input-list">
+                  {getCourseGroups(holePars).map(course => (
+                    <section className="course-input-card compact-course-card" key={course.label}>
+                      <h3>{course.label} <small>기준파 {sumNumbers(course.holes.map(hole => hole.value))}/36</small></h3>
+                      <div className="par-grid compact-par-grid">
+                        {course.holes.map(hole => (
+                          <label key={hole.index}>
+                            <span>{hole.number}홀</span>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={round.holePars?.[hole.index] ?? hole.value}
+                              onFocus={event => event.target.select()}
+                              onChange={e => updateHolePar(hole.index, e.target.value)}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              </div>
+            </Card>
+
+            {round.method === '신페리오' && (
           <Card
             title="신페리오 숨김 홀"
             subtitle={`필요 숨김 홀 ${expectedHiddenCount}개 · 목표 숨김 파 ${formatParValue(targetHiddenPar)}`}
@@ -1616,7 +1826,7 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces,
                             className={manualHiddenIndexes.includes(hole.index) ? 'hole-toggle active' : 'hole-toggle'}
                             onClick={() => toggleManualHiddenHole(hole.index)}
                           >
-                            <strong>{hole.number}H</strong>
+                            <strong>{hole.number}홀</strong>
                             <span>파 {hole.value}</span>
                           </button>
                         ))}
@@ -1627,11 +1837,16 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces,
               </div>
             )}
           </Card>
+            )}
+          </>
         )}
       </div>
 
       {error && <p className="error">{error}</p>}
-      <Button onClick={submit}>참가자 선택으로 이동</Button>
+      <div className="sticky-action-bar">
+        {step === 'settings' && <Button variant="secondary" onClick={() => { setError(''); setStep('basic'); }}>기본 정보 수정</Button>}
+        <Button onClick={step === 'basic' ? goSettings : submit}>{step === 'basic' ? '경기 설정으로 이동' : '참가자 선택으로 이동'}</Button>
+      </div>
     </main>
   );
 }
@@ -1650,6 +1865,8 @@ function MemberSelectScreen({
 }) {
   const [selected, setSelected] = useState([]);
   const [leaders, setLocalLeaders] = useState([]);
+  const [step, setStep] = useState('members');
+  const [customGroups, setCustomGroups] = useState({});
   const assignmentOptions = useMemo(() => getAssignmentOptions(round?.method), [round?.method]);
   const defaultAssignmentMode = getDefaultAssignmentMode(round?.method);
   const selectedAssignmentMode = assignmentOptions.some(option => option.value === teamAssignmentMode)
@@ -1657,6 +1874,8 @@ function MemberSelectScreen({
     : defaultAssignmentMode;
   const isTeamMatch = isTeamMatchMethod(round?.method);
   const sortedMembers = useMemo(() => sortMembersForDisplay(members), [members]);
+  const selectedMembers = useMemo(() => sortedMembers.filter(m => selected.includes(m.id)), [selected, sortedMembers]);
+  const isCustomAssignment = selectedAssignmentMode === TEAM_ASSIGNMENT_MODES.CUSTOM;
   const toggle = (id) => setSelected(prev => prev.includes(id) ? prev.filter(v => v !== id) : [...prev, id]);
   const toggleLeader = (id) => setLocalLeaders(prev => prev.includes(id) ? prev.filter(v => v !== id) : [...prev, id]);
 
@@ -1666,9 +1885,35 @@ function MemberSelectScreen({
     }
   }, [assignmentOptions, defaultAssignmentMode, teamAssignmentMode, setTeamAssignmentMode]);
 
+  const goModeStep = () => {
+    if (selectedMembers.length < 3) return alert('참가자를 3명 이상 선택해 주세요.');
+    setStep('mode');
+  };
+
+  const goFinalStep = () => {
+    if (isTeamMatch) return next();
+    setStep('size');
+  };
+
   const next = () => {
-    const participants = sortedMembers.filter(m => selected.includes(m.id));
+    let participants = selectedMembers;
     if (participants.length < 3) return alert('참가자를 3명 이상 선택해 주세요.');
+    if (isCustomAssignment) {
+      const missingMembers = participants.filter(member => !Number.isInteger(Number(customGroups[member.id])) || Number(customGroups[member.id]) < 1);
+      if (missingMembers.length > 0) return alert(`${missingMembers.map(member => member.name).join(', ')} 회원의 조 번호를 입력해 주세요.`);
+
+      const grouped = participants.reduce((groups, member) => {
+        const groupNumber = Number(customGroups[member.id]);
+        return { ...groups, [groupNumber]: [...(groups[groupNumber] || []), member] };
+      }, {});
+      const smallGroup = Object.entries(grouped).find(([, groupMembers]) => groupMembers.length < 3);
+      if (smallGroup) return alert(`${smallGroup[0]}조는 ${smallGroup[1].length}명입니다. 사용자 지정 편성도 한 조가 3명 이상이어야 합니다.`);
+
+      participants = participants.map(member => ({
+        ...member,
+        manualTeamNumber: Number(customGroups[member.id])
+      }));
+    }
     setParticipants(participants);
     setLeaders(sortedMembers.filter(m => leaders.includes(m.id)));
     setTeamAssignmentMode(selectedAssignmentMode);
@@ -1678,35 +1923,73 @@ function MemberSelectScreen({
   return (
     <main className="page">
       <header className="topbar"><h1>참가자 선택</h1><p>{round?.title} · {round?.date} · {round?.place}</p></header>
-      <Card title={isTeamMatch ? '팀전 편성 방식' : '조편성 방식'} subtitle={isTeamMatch ? '2인 팀을 만든 뒤 2개 팀을 한 조로 배치합니다.' : '운영 목적에 맞는 조편성 기준을 고르세요.'}>
-        <div className="option-grid">
-          {assignmentOptions.map(option => (
-            <button
-              key={option.value}
-              className={selectedAssignmentMode === option.value ? 'option-card active' : 'option-card'}
-              onClick={() => setTeamAssignmentMode(option.value)}
-            >
-              <strong>{option.label}</strong>
-              <span>{option.description}</span>
-            </button>
-          ))}
-        </div>
-      </Card>
-      {!isTeamMatch && (
-        <Card title="조당 인원">
-          <div className="chip-row">{[3,4,5].map(size => <button key={size} className={teamSize === size ? 'chip active' : 'chip'} onClick={() => setTeamSize(size)}>{size}명</button>)}</div>
+      {step === 'members' && (
+        <Card title={`참가자 선택 · ${selectedMembers.length}명`} subtitle="참가할 회원과 조장을 선택하세요. 조장은 후보가 아니어도 선택할 수 있습니다." icon={Users}>
+          <div className="member-grid">
+            {sortedMembers.map(m => {
+              const isSelected = selected.includes(m.id);
+              return (
+                <div key={m.id} className={`select-card ${isSelected ? 'selected' : ''}`}>
+                  <button onClick={() => toggle(m.id)}><strong>{m.name}</strong><span>{getMemberAffiliationText(m)}</span><em>{m.skillLevel} · 핸디 {m.handicap} · {getMemberSkillText(m, memberStats)}</em></button>
+                  {isSelected && <button className={leaders.includes(m.id) ? 'leader active' : 'leader'} onClick={() => toggleLeader(m.id)}>조장</button>}
+                </div>
+              );
+            })}
+          </div>
         </Card>
       )}
-      <div className="member-grid">
-        {sortedMembers.map(m => (
-          <div key={m.id} className={`select-card ${selected.includes(m.id) ? 'selected' : ''}`}>
-            <button onClick={() => toggle(m.id)}><strong>{m.name}</strong><span>{getMemberAffiliationText(m)}</span><em>{m.skillLevel} · 핸디 {m.handicap} · {getMemberSkillText(m, memberStats)}</em></button>
-            {m.isLeaderCandidate && <button className={leaders.includes(m.id) ? 'leader active' : 'leader'} onClick={() => toggleLeader(m.id)}>조장</button>}
+
+      {step === 'mode' && (
+        <Card title={isTeamMatch ? '팀전 편성 방식' : '조편성 방식'} subtitle={isTeamMatch ? '2인 팀을 만든 뒤 2개 팀을 한 조로 배치합니다.' : '운영 목적에 맞는 조편성 기준을 고르세요.'}>
+          <div className="option-grid">
+            {assignmentOptions.map(option => (
+              <button
+                key={option.value}
+                className={selectedAssignmentMode === option.value ? 'option-card active' : 'option-card'}
+                onClick={() => setTeamAssignmentMode(option.value)}
+              >
+                <strong>{option.label}</strong>
+                <span>{option.description}</span>
+              </button>
+            ))}
           </div>
-        ))}
-      </div>
-      <div className="bottom-actions">
-        <Button onClick={next}>조편성하기</Button>
+        </Card>
+      )}
+
+      {step === 'size' && !isTeamMatch && (
+        <>
+          {!isCustomAssignment && (
+            <Card title="조당 인원">
+              <div className="chip-row">{[3,4,5].map(size => <button key={size} className={teamSize === size ? 'chip active' : 'chip'} onClick={() => setTeamSize(size)}>{size}명</button>)}</div>
+            </Card>
+          )}
+          {isCustomAssignment && (
+            <Card title="사용자 지정 조 입력" subtitle="회원별 조 번호를 입력하세요. 같은 번호의 회원이 한 조가 됩니다.">
+              <div className="manual-team-grid">
+                {selectedMembers.map(member => (
+                  <label key={member.id} className="manual-team-row">
+                    <span>{member.name}</span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      placeholder="조 번호"
+                      value={customGroups[member.id] || ''}
+                      onChange={event => setCustomGroups(prev => ({ ...prev, [member.id]: event.target.value.replace(/\D/g, '').slice(0, 2) }))}
+                    />
+                  </label>
+                ))}
+              </div>
+            </Card>
+          )}
+        </>
+      )}
+
+      <div className="sticky-action-bar">
+        {step !== 'members' && <Button variant="secondary" onClick={() => setStep(step === 'size' ? 'mode' : 'members')}>{step === 'size' ? '편성 방식 수정' : '참가자 수정'}</Button>}
+        {step === 'members' && <Button onClick={goModeStep}>편성 방식 선택</Button>}
+        {step === 'mode' && <Button onClick={goFinalStep}>{isTeamMatch ? '조편성하기' : '조당 인원 선택'}</Button>}
+        {step === 'size' && <Button onClick={next}>조편성하기</Button>}
       </div>
     </main>
   );
@@ -1772,24 +2055,24 @@ function TeamResultScreen({
 
   return (
     <main className="page">
-      <header className="topbar sport-topbar"><div><p className="eyebrow">Buddy AI Pairing</p><h1>오늘의 베스트 조</h1><p>{round?.title} · {participants.length}명 · {teams.length}개 조 · {getAssignmentModeLabel(assignmentMode)}</p></div></header>
+      <header className="topbar sport-topbar"><div><p className="eyebrow">조편성 도우미</p><h1>오늘의 베스트 조</h1><p>{round?.title} · {participants.length}명 · {teams.length}개 조 · {getAssignmentModeLabel(assignmentMode)}</p></div></header>
 
       <section className="ai-report-card">
         <div>
-          <span className="badge-live">AI PICK</span>
+          <span className="badge-live">추천 편성</span>
           <h2>{pattern ? `${pattern} 편성 완료` : '편성 완료'}</h2>
           <p>{buddyInsight}</p>
         </div>
         <div className="ai-metrics">
           <div><strong>{skillSpread}</strong><span>실력 편차</span></div>
-          <div><strong>{leaders.length}</strong><span>조장 후보</span></div>
+          <div><strong>{leaders.length}</strong><span>선택 조장</span></div>
           <div><strong>{teams.length}</strong><span>라운드 조</span></div>
         </div>
       </section>
 
       <div className="list team-list">
         {teams.map(team => (
-          <Card key={team.id} title={team.name} subtitle={isTeamMatch ? `Team match · 평균 실력 ${team.skillAverage}` : `${team.leader ? `Captain ${team.leader.name}` : 'Captain 미지정'} · 평균 실력 ${team.skillAverage}`}>
+          <Card key={team.id} title={team.name} subtitle={isTeamMatch ? `팀전 · 평균 실력 ${team.skillAverage}` : `${team.leader ? `조장 ${team.leader.name}` : '조장 미지정'} · 평균 실력 ${team.skillAverage}`}>
             {isTeamMatch ? (
               <div className="match-team-list">
                 {team.matchTeams.map(matchTeam => (
@@ -1803,7 +2086,7 @@ function TeamResultScreen({
             ) : (
               <div className="team-roster">
                 {[team.leader, ...team.members].filter(Boolean).map(member => (
-                  <span key={member.id} className={member.id === team.leader?.id ? 'roster-chip captain' : 'roster-chip'}>{member.name}{member.id === team.leader?.id ? ' · Captain' : ''}</span>
+                  <span key={member.id} className={member.id === team.leader?.id ? 'roster-chip captain' : 'roster-chip'}>{member.name}{member.id === team.leader?.id ? ' · 조장' : ''}</span>
                 ))}
               </div>
             )}
@@ -1861,14 +2144,14 @@ function ScoreInputScreen({ setScreen, participants, round, teams, scores, setSc
     <main className="page score-page">
       <section className="score-hud">
         <div>
-          <p className="eyebrow">Live Scoreboard</p>
+          <p className="eyebrow">실시간 점수판</p>
           <h1>{round.title}</h1>
-          <p>{round.place} · {round.holes}H · {round.method}</p>
+          <p>{round.place} · {round.holes}홀 · {round.method}</p>
         </div>
         <div className="hud-metrics">
-          <div><strong>{completedEntries}/{scoreEntries.length}</strong><span>Players</span></div>
-          <div><strong>{totalPar}</strong><span>Course Par</span></div>
-          <div><strong>LIVE</strong><span>Ranking</span></div>
+          <div><strong>{completedEntries}/{scoreEntries.length}</strong><span>입력 대상</span></div>
+          <div><strong>{totalPar}</strong><span>기준파</span></div>
+          <div><strong>실시간</strong><span>순위</span></div>
         </div>
       </section>
 
@@ -1885,12 +2168,12 @@ function ScoreInputScreen({ setScreen, participants, round, teams, scores, setSc
       </div>
 
       {activeEntry && (
-        <Card title={activeEntry.name} subtitle={`${getScoreEntrySubtitle(activeEntry)} · Total ${activeMeta.total} · ${formatScoreDiff(activeMeta.diff)} TO PAR`} icon={Activity}>
+        <Card title={activeEntry.name} subtitle={`${getScoreEntrySubtitle(activeEntry)} · 총타수 ${activeMeta.total} · 기준파 대비 ${formatScoreDiff(activeMeta.diff)}`} icon={Activity}>
           <div className="score-summary-grid">
-            <div><span>Total</span><strong>{activeMeta.total}</strong></div>
-            <div><span>To Par</span><strong className={getScoreDiffClass(activeMeta.diff)}>{formatScoreDiff(activeMeta.diff)}</strong></div>
-            <div><span>Par Save</span><strong>{activeMeta.parSaveRate}%</strong></div>
-            <div><span>Birdie</span><strong>{activeMeta.birdieCount}</strong></div>
+            <div><span>총타수</span><strong>{activeMeta.total}</strong></div>
+            <div><span>기준파 대비</span><strong className={getScoreDiffClass(activeMeta.diff)}>{formatScoreDiff(activeMeta.diff)}</strong></div>
+            <div><span>파 이하</span><strong>{activeMeta.parSaveRate}%</strong></div>
+            <div><span>버디</span><strong>{activeMeta.birdieCount}</strong></div>
           </div>
           <div className="course-input-list sporty-score-list">
             {courseGroups.map(course => (
@@ -1902,9 +2185,17 @@ function ScoreInputScreen({ setScreen, participants, round, teams, scores, setSc
                     const diff = Number(value) - Number(hole.value);
                     return (
                       <div key={hole.index} className={`score-cell ${getScoreDiffClass(diff)}`}>
-                        <span className="hole-label">{hole.number}H</span>
-                        <small>PAR {hole.value}</small>
-                        <strong>{value}</strong>
+                        <span className="hole-label">{hole.number}홀</span>
+                        <small>파 {hole.value}</small>
+                        <input
+                          className="score-direct-input"
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          value={value}
+                          onFocus={event => event.target.select()}
+                          onChange={event => updateScore(activeEntry.id, hole.index, event.target.value)}
+                        />
                         <em>{formatScoreDiff(diff, 0)}</em>
                         <div className="score-stepper">
                           <button onClick={() => updateScore(activeEntry.id, hole.index, Number(value) - 1)} aria-label={`${hole.number}홀 점수 낮추기`}>−</button>
@@ -1920,11 +2211,11 @@ function ScoreInputScreen({ setScreen, participants, round, teams, scores, setSc
         </Card>
       )}
 
-      <Card title="Live Ranking Preview" subtitle="점수를 바꾸면 순위가 바로 갱신됩니다." icon={Trophy}>
+      <Card title="실시간 순위 미리보기" subtitle="점수를 바꾸면 순위가 바로 갱신됩니다." icon={Trophy}>
         <div className="mini-leaderboard">
           {rankings.slice(0, 5).map(result => (
             <div key={result.id} className="mini-leaderboard-row">
-              <strong>#{result.rank}</strong>
+              <strong>{result.rank}위</strong>
               <span>{getRankingDisplayName(result)}</span>
               <b>{formatScoreDiff(Number(result.total || 0) - totalPar)}</b>
             </div>
@@ -1955,6 +2246,10 @@ function RankingScreen({ setScreen, participants, scores, round, teams, assignme
     } catch (error) {
       alert('공유에 실패했습니다. 브라우저 권한을 확인해 주세요.');
     }
+  };
+
+  const saveShareImage = () => {
+    downloadShareCardImage(round, rankings, totalPar);
   };
 
   const saveRecord = () => {
@@ -1988,7 +2283,7 @@ function RankingScreen({ setScreen, participants, scores, round, teams, assignme
 
   return (
     <main className="page leaderboard-page">
-      <header className="topbar sport-topbar"><div><p className="eyebrow">Live Leaderboard</p><h1>순위표</h1><p>{round.title} · {round.place} · {round.method} · 기준파 {totalPar}</p></div></header>
+      <header className="topbar sport-topbar"><div><p className="eyebrow">실시간 순위표</p><h1>순위표</h1><p>{round.title} · {round.place} · {round.method} · 기준파 {totalPar}</p></div></header>
       {round.method === '신페리오' && (
         <Card
           title="신페리오 계산 정보"
@@ -1999,18 +2294,18 @@ function RankingScreen({ setScreen, participants, scores, round, teams, assignme
       )}
 
       <section className="share-card-preview">
-        <span className="badge-live">ROUND CARD</span>
-        <p>{round.place || 'ParkBuddy Round'}</p>
+        <span className="badge-live">공유 카드</span>
+        <p>{round.place || '파크버디 라운딩'}</p>
         <strong>{winner ? formatScoreDiff(Number(winner.total || 0) - totalPar) : 'E'}</strong>
-        <h2>{winner ? getRankingDisplayName(winner) : 'No Winner Yet'}</h2>
-        <small>{round.date} · {round.holes}H · {rankings.length} Players</small>
-        <Button icon={Share2} variant="glass" onClick={shareResult}>Share Result</Button>
+        <h2>{winner ? getRankingDisplayName(winner) : '기록 대기'}</h2>
+        <small>{round.date} · {round.holes}홀 · 참가 {rankings.length}명</small>
+        <Button icon={Share2} variant="glass" onClick={shareResult}>결과 공유</Button>
       </section>
 
       <div className="podium">
         {podium.map(result => (
           <div key={result.id} className={`podium-card rank-${result.rank}`}>
-            <span>#{result.rank}</span>
+            <span>{result.rank}위</span>
             <strong>{getRankingDisplayName(result)}</strong>
             <b>{formatScoreDiff(Number(result.total || 0) - totalPar)}</b>
             <small>{formatRankingDetail(result, round.method)}</small>
@@ -2022,7 +2317,7 @@ function RankingScreen({ setScreen, participants, scores, round, teams, assignme
         {rankings.map(r => (
           <Card key={r.id}>
             <div className="ranking-row sporty-ranking-row">
-              <strong>#{r.rank}</strong>
+              <strong>{r.rank}위</strong>
               <div>
                 <h3>{getRankingDisplayName(r)}</h3>
                 {r.type === 'team' && <p>{getRankingMembersText(r)}</p>}
@@ -2035,6 +2330,7 @@ function RankingScreen({ setScreen, participants, scores, round, teams, assignme
       </div>
       <div className="bottom-actions">
         <Button variant="secondary" icon={Share2} onClick={shareResult}>공유 카드 복사</Button>
+        <Button variant="secondary" icon={Download} onClick={saveShareImage}>공유 이미지 저장</Button>
         <Button icon={Save} onClick={saveRecord}>기록에 점수 저장</Button>
       </div>
     </main>
@@ -2168,7 +2464,7 @@ function SharedScoreScreen({ records, setRecords, recordId, entryId, setScreen }
       <section className="live-score-banner">
         <div>
           <Activity size={20} />
-          <strong>Live Score Sync</strong>
+          <strong>실시간 점수 동기화</strong>
         </div>
         <span>코스 탭을 바꿔도 입력값은 유지되고, 순위는 자동으로 갱신됩니다.</span>
       </section>
@@ -2184,7 +2480,7 @@ function SharedScoreScreen({ records, setRecords, recordId, entryId, setScreen }
               onClick={() => setActiveCourseIndex(index)}
             >
               <strong>{course.label}</strong>
-              <span>1-9H</span>
+              <span>1~9홀</span>
             </button>
           ))}
         </div>
@@ -2199,8 +2495,8 @@ function SharedScoreScreen({ records, setRecords, recordId, entryId, setScreen }
                 const scoreValue = Number(localScores[hole.index] ?? hole.value);
                 return (
                   <label className={`score-cell shared-score-cell ${getScoreDiffClass(scoreValue - Number(hole.value || 0))}`} key={hole.index}>
-                    <span className="hole-label">{hole.number}H</span>
-                    <small>PAR {hole.value}</small>
+                    <span className="hole-label">{hole.number}홀</span>
+                    <small>파 {hole.value}</small>
                     <input
                       type="number"
                       inputMode="numeric"
@@ -2284,7 +2580,7 @@ function RecordScreen({ records, setRecords, onScoreInput }) {
 
   return (
     <main className="page">
-      <header className="topbar"><h1>라운딩 기록 보기</h1></header>
+      <header className="topbar"><h1>라운딩 기록 보기</h1><p>점수 입력 링크에서 저장된 기록은 이 화면에서 주기적으로 동기화되어 경기 방식별 순위가 갱신됩니다.</p></header>
       {records.length > 0 && (
         <Card title="기록 검색" subtitle={`${filteredRecords.length}개 표시`} icon={Search}>
           <Field label="라운딩명, 날짜, 장소, 경기 방식, 참가자 이름으로 검색">
@@ -2642,3 +2938,4 @@ function App() {
 }
 
 createRoot(document.getElementById('root')).render(<App />);
+
