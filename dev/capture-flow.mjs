@@ -307,7 +307,7 @@ async function capture(client, name) {
 
 async function resetApp(client) {
   await client.send('Page.navigate', { url: appUrl });
-  await waitForText(client, '라운딩 시작');
+  await waitForText(client, '오늘의 라운드가');
   await evaluate(client, 'window.alert = () => {}; window.confirm = () => true; true');
   await delay(500);
 }
@@ -481,7 +481,7 @@ async function main() {
   const appPort = await findAvailablePort(5173);
   appUrl = `http://127.0.0.1:${appPort}`;
 
-  const vite = startProcess('C:\\Program Files\\nodejs\\node.exe', [
+  const vite = startProcess(process.execPath, [
     join(process.cwd(), 'node_modules\\vite\\bin\\vite.js'),
     '--host',
     '127.0.0.1',

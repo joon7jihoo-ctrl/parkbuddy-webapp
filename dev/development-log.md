@@ -572,3 +572,31 @@ Supabase 저장 구조와 앱의 시각 방향을 다음 단계 플랫폼 구조
 - `dev/capture-flow.mjs` 자동 브라우저 검증 통과
 - 캡처 확인: `C:\Capture\01-home.png`, `C:\Capture\03-round-create-stroke.png`, `C:\Capture\04-member-select-mode.png`, `C:\Capture\09-records-mobile.png`, `C:\Capture\09-shared-score-entry.png`, `C:\Capture\10-personal-scores.png`
 - Supabase REST 확인: `parkbuddy_app_state`, `parkbuddy_members`, `parkbuddy_rounds`, `parkbuddy_round_scores`, `parkbuddy_round_rankings`, `parkbuddy_app_settings` 모두 200 응답
+
+## 31. 2026-06-12 삭제 안정성, 단계 진행바, 코스별 점수 그리드 보강
+
+사용자 요청에 따라 삭제 동기화, 홈 문구 반응형, 다크모드, CSV 저장, 라운딩 생성 단계 이동, 점수 입력 UI를 보완했습니다.
+
+- 라운딩 기록 삭제 직후 Supabase 폴링으로 삭제된 순위/점수/라운딩 정보가 다시 표시되는 문제를 방지했습니다.
+- 삭제된 라운딩 ID를 클라이언트 차단 목록으로 관리하고, 원격 데이터 재동기화 시 해당 기록을 필터링하도록 수정했습니다.
+- 홈 화면 문구 `오늘의 라운드가, / 나의 기록이 된다.`가 항상 두 줄로 보이도록 변경했습니다.
+- 홈 보조 문구 `조편성, 실시간 점수, 순위표, 개인 성장 데이터를 한 곳에서 관리하세요.`는 한 줄로 유지되도록 크기와 배치를 조정했습니다.
+- 다크모드에서 회원 카드, 등록 회원 숫자, 스코어 표의 기준파 대비 값과 성과 라벨이 흐리게 보이는 문제를 보정했습니다.
+- CSV 내보내기와 CSV 양식저장은 지원 브라우저에서 파일 저장 대화창을 열고, 미지원 브라우저에서는 기존 다운로드 방식으로 동작하도록 수정했습니다.
+- 라운딩 생성 화면에 상단 고정형 단계 진행바를 추가했습니다.
+- 라운딩 생성과 참가자 선택의 브라우저 뒤로가기가 바로 전 단계로 이동하도록 히스토리 상태를 세분화했습니다.
+- `기본 정보 수정`, `편성 방식 수정`, `참가자 수정`처럼 뒤로가기와 중복되는 버튼을 제거했습니다.
+- 기준파 입력 화면은 코스별 1~9홀 표 구조로 정리했고, 코스별 36타 검증을 실시간 안내 방식으로 변경했습니다.
+- 경기방식에 `청백전`을 추가하고 팀 단위 점수 집계 방식으로 처리했습니다.
+- 점수 입력/수정 화면과 공유 링크 점수 입력 화면을 동일한 코스 탭형 그리드 UI로 통합했습니다.
+- 점수 입력 셀에 `홀인원`, `알바트로스`, `이글`, `버디`, `파` 등 성과 라벨을 표시하도록 추가했습니다.
+- 공유 링크 점수 입력 화면에서도 상단에서 입력 대상 또는 조를 전환할 수 있도록 수정했습니다.
+- 회원 등록 및 관리 모바일 확장 카드의 수정/삭제 버튼을 요약 영역 아래 가로 배치로 정리했습니다.
+- `dev/capture-flow.mjs`는 현재 실행 중인 Node 런타임을 사용하도록 변경하고, 홈 대기 기준을 새 문구에 맞췄습니다.
+- 평가분석보고서를 2026-06-12 기준으로 다시 작성해 디자인/UX 영역과 기술/운영 영역의 Quick Win, 장기 과제를 정리했습니다.
+
+검증 결과:
+
+- Vite production build 통과
+- `dev/capture-flow.mjs` 자동 브라우저 검증 통과
+- 캡처 확인: `C:\Capture\01-home.png`, `C:\Capture\02-members-mobile-expanded.png`, `C:\Capture\03-round-create-stroke.png`, `C:\Capture\07-score-input.png`, `C:\Capture\09-records-mobile.png`, `C:\Capture\09-shared-score-entry.png`

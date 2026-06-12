@@ -21,8 +21,8 @@ const DEFAULT_HOLE_PAR = 4;
 const COURSE_HOLE_COUNT = 9;
 const COURSE_LABELS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 const HOLE_OPTIONS = Array.from({ length: 9 }, (_, index) => (index + 1) * COURSE_HOLE_COUNT);
-const GAME_METHODS = ['스트로크 플레이', '신페리오', '매치 플레이', '스크램블', '포섬', '포볼', '스테이블포드'];
-const TEAM_SCORE_METHODS = new Set(['스크램블', '포섬', '포볼']);
+const GAME_METHODS = ['스트로크 플레이', '신페리오', '매치 플레이', '스크램블', '포섬', '포볼', '스테이블포드', '청백전'];
+const TEAM_SCORE_METHODS = new Set(['스크램블', '포섬', '포볼', '청백전']);
 const BACK_COUNT_HOLE_COUNTS = [9, 6, 3, 1];
 const INDIVIDUAL_ASSIGNMENT_OPTIONS = [
   { value: TEAM_ASSIGNMENT_MODES.BALANCED, label: '실력 균형', description: '오늘은 실력 차이가 튀지 않도록 조를 고르게 맞춥니다.' },
@@ -210,7 +210,7 @@ function getScoreEntries(participants = [], teams = [], round = {}) {
     }));
   }
 
-  if (round?.method === '스크램블') {
+  if (round?.method === '스크램블' || round?.method === '청백전') {
     return teams.map(team => {
       const members = flattenGroupMembers(team);
       return {
@@ -837,8 +837,29 @@ function createSafeFilename(value) {
   return name || 'round-record';
 }
 
-function downloadTextFile(filename, content, type = 'text/plain;charset=utf-8') {
+async function downloadTextFile(filename, content, type = 'text/plain;charset=utf-8') {
   const blob = new Blob(['\ufeff' + content], { type });
+  if (window.showSaveFilePicker) {
+    try {
+      const extensionIndex = filename.lastIndexOf('.');
+      const extension = extensionIndex >= 0 ? filename.slice(extensionIndex) : '.txt';
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{
+          description: filename.toLowerCase().endsWith('.csv') ? 'CSV 파일' : '텍스트 파일',
+          accept: { [type.split(';')[0] || 'text/plain']: [extension] }
+        }]
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return;
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+      console.warn(error?.message || '파일 저장 대화창을 열지 못했습니다.');
+    }
+  }
+
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
   link.download = filename;
@@ -985,6 +1006,209 @@ function findCourseParIssues(rawPars = [], holeCount = 0) {
   }
 
   return { normalizedPars, message: '' };
+}
+
+function getCourseParStatuses(rawPars = [], holeCount = 0) {
+  const normalizedPars = normalizeHoleParsForSubmit(rawPars, holeCount);
+  return getCourseGroups(normalizedPars).map(course => {
+    const invalidHoles = course.holes.filter(hole => hole.value === null).map(hole => hole.number);
+    const total = course.holes.reduce((sum, hole) => sum + Number(hole.value || 0), 0);
+    return {
+      label: course.label,
+      total,
+      invalidHoles,
+      isValid: invalidHoles.length === 0 && total === 36
+    };
+  });
+}
+
+function getParValidationMessage(rawPars = [], holeCount = 0) {
+  const issue = findCourseParIssues(rawPars, holeCount);
+  return issue.message;
+}
+
+function getScoreBadge(score, par) {
+  const value = Number(score);
+  const parValue = Number(par);
+  if (!Number.isFinite(value) || !Number.isFinite(parValue)) return '';
+  if (value === 1) return '홀인원';
+  const diff = value - parValue;
+  if (diff <= -3) return '알바트로스';
+  if (diff === -2) return '이글';
+  if (diff === -1) return '버디';
+  if (diff === 0) return '파';
+  if (diff === 1) return '보기';
+  if (diff === 2) return '더블보기';
+  return '트러블';
+}
+
+function useHorizontalSwipe(onPrevious, onNext) {
+  const startXRef = React.useRef(null);
+
+  return {
+    onTouchStart: event => {
+      startXRef.current = event.touches?.[0]?.clientX ?? null;
+    },
+    onTouchEnd: event => {
+      if (startXRef.current === null) return;
+      const endX = event.changedTouches?.[0]?.clientX ?? startXRef.current;
+      const diff = endX - startXRef.current;
+      startXRef.current = null;
+      if (Math.abs(diff) < 48) return;
+      if (diff > 0) onPrevious?.();
+      else onNext?.();
+    }
+  };
+}
+
+function StepProgress({ steps, current, onSelect }) {
+  const currentIndex = Math.max(0, steps.findIndex(step => step.id === current));
+
+  return (
+    <nav className="step-progress" aria-label="라운딩 생성 단계">
+      {steps.map((step, index) => {
+        const Icon = step.icon;
+        const status = index < currentIndex ? 'done' : index === currentIndex ? 'active' : 'upcoming';
+        return (
+          <button
+            key={step.id}
+            className={`step-item ${status}`}
+            onClick={() => index <= currentIndex && onSelect?.(step.id)}
+            disabled={index > currentIndex}
+            aria-current={index === currentIndex ? 'step' : undefined}
+          >
+            {Icon && <Icon size={18} />}
+            <span>{step.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+function CourseParEditor({ holePars, rawPars, updateHolePar, statuses }) {
+  return (
+    <div className="course-input-list par-editor">
+      {getCourseGroups(holePars).map(course => {
+        const status = statuses.find(item => item.label === course.label);
+        return (
+          <section className="course-input-card compact-course-card par-course-card" key={course.label}>
+            <header>
+              <h3>{course.label}</h3>
+              <span className={status?.isValid ? 'par-status ok' : 'par-status error'}>{status?.total || 0}/36</span>
+            </header>
+            <div className="par-grid compact-par-grid par-matrix">
+              {course.holes.map(hole => (
+                <label key={hole.index}>
+                  <span>{hole.number}</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={rawPars?.[hole.index] ?? hole.value}
+                    onFocus={event => event.target.select()}
+                    onChange={event => updateHolePar(hole.index, event.target.value)}
+                    aria-label={`${course.label} ${hole.number}홀 기준파`}
+                  />
+                </label>
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function ScoreGridEditor({
+  holePars,
+  scores,
+  onScoreChange,
+  activeCourseIndex,
+  setActiveCourseIndex,
+  compact,
+  setCompact
+}) {
+  const courseGroups = useMemo(() => getCourseGroups(holePars), [holePars]);
+  const selectedCourse = courseGroups[activeCourseIndex] || courseGroups[0];
+  const swipeHandlers = useHorizontalSwipe(
+    () => setActiveCourseIndex(Math.max(0, activeCourseIndex - 1)),
+    () => setActiveCourseIndex(Math.min(courseGroups.length - 1, activeCourseIndex + 1))
+  );
+
+  React.useEffect(() => {
+    if (activeCourseIndex >= courseGroups.length) setActiveCourseIndex(0);
+  }, [activeCourseIndex, courseGroups.length, setActiveCourseIndex]);
+
+  if (!selectedCourse) return null;
+
+  const courseTotal = selectedCourse.holes.reduce((sum, hole) => sum + Number(scores?.[hole.index] ?? hole.value), 0);
+
+  return (
+    <section className={compact ? 'score-editor compact' : 'score-editor'} {...swipeHandlers}>
+      <div className="score-editor-toolbar">
+        <div className="course-tabs" role="tablist" aria-label="코스 선택">
+          {courseGroups.map((course, index) => (
+            <button
+              key={course.label}
+              className={activeCourseIndex === index ? 'course-tab active' : 'course-tab'}
+              role="tab"
+              aria-selected={activeCourseIndex === index}
+              onClick={() => setActiveCourseIndex(index)}
+            >
+              <strong>{course.label}</strong>
+              <span>1~9홀</span>
+            </button>
+          ))}
+        </div>
+        <button className={compact ? 'compact-toggle active' : 'compact-toggle'} onClick={() => setCompact(value => !value)}>
+          {compact ? '확대' : '축소'}
+        </button>
+      </div>
+
+      <div className="shared-score-table-card score-matrix-card">
+        <div className="shared-score-table-title">
+          <strong>{selectedCourse.label}</strong>
+          <span>{courseTotal}타</span>
+        </div>
+        <div className="score-matrix" role="table" aria-label={`${selectedCourse.label} 홀별 점수표`}>
+          <div className="score-matrix-row score-matrix-head" role="row">
+            {selectedCourse.holes.map(hole => <span key={hole.index}>{hole.number}홀</span>)}
+          </div>
+          <div className="score-matrix-row score-matrix-par" role="row">
+            {selectedCourse.holes.map(hole => <span key={hole.index}>파 {hole.value}</span>)}
+          </div>
+          <div className="score-matrix-row score-matrix-inputs" role="row">
+            {selectedCourse.holes.map(hole => {
+              const value = scores?.[hole.index] ?? hole.value;
+              const diff = Number(value) - Number(hole.value);
+              return (
+                <label key={hole.index} className={getScoreDiffClass(diff)}>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={value}
+                    onFocus={event => event.target.select()}
+                    onChange={event => onScoreChange(hole.index, event.target.value)}
+                    aria-label={`${selectedCourse.label} ${hole.number}홀 점수`}
+                  />
+                  <em>{formatScoreDiff(diff, 0)}</em>
+                </label>
+              );
+            })}
+          </div>
+          <div className="score-matrix-row score-matrix-badges" role="row">
+            {selectedCourse.holes.map(hole => (
+              <span key={hole.index} className={getScoreDiffClass(Number(scores?.[hole.index] ?? hole.value) - Number(hole.value))}>
+                {getScoreBadge(scores?.[hole.index] ?? hole.value, hole.value)}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function downloadShareCardImage(round, rankings, totalPar) {
@@ -1155,8 +1379,8 @@ function HomeScreen({ setScreen, members, records }) {
       <div className="hero sport-hero">
         <div className="hero-main-copy">
           <p className="eyebrow">{clubName}</p>
-          <h1>오늘의 라운드가, 나의 기록이 된다.</h1>
-          <p>조편성, 실시간 점수, 순위표, 개인 성장 데이터를 한 곳에서 관리하세요.</p>
+          <h1 className="hero-title-two-line"><span>오늘의 라운드가,</span><span>나의 기록이 된다.</span></h1>
+          <p className="hero-subtitle-nowrap">조편성, 실시간 점수, 순위표, 개인 성장 데이터를 한 곳에서 관리하세요.</p>
         </div>
         <div className="hero-side-panel">
           <div className="hero-score-card" aria-label="최근 라운드 하이라이트">
@@ -1346,13 +1570,8 @@ function MemberScreen({ members, memberStats, setMembers }) {
     setError('');
   };
 
-  const downloadSample = () => {
-    const blob = new Blob(['\ufeff' + SAMPLE_CSV], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'parkbuddy_member_sample.csv';
-    a.click();
-    URL.revokeObjectURL(a.href);
+  const downloadSample = async () => {
+    await downloadTextFile('parkbuddy_member_sample.csv', SAMPLE_CSV, 'text/csv;charset=utf-8');
   };
 
   const uploadCsv = (event) => {
@@ -1622,12 +1841,11 @@ function PersonalScoreScreen({ members, records }) {
   );
 }
 
-function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces, customPlaces = [] }) {
-  const [province, setProvince] = useState('전라남도');
-  const [step, setStep] = useState('basic');
-  const [round, setLocalRound] = useState({
+function createInitialRoundDraft() {
+  return {
     title: '정기 라운딩',
     date: getTodayDateInputValue(),
+    province: '전라남도',
     place: '장성 파크골프장',
     memo: '',
     holes: 18,
@@ -1636,8 +1854,28 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces,
     hiddenHoleMode: 'auto',
     manualHiddenHoleIndexes: [],
     showHiddenHoles: true
-  });
+  };
+}
+
+function RoundCreateScreen({
+  setScreen,
+  setRound,
+  recentPlaces,
+  setRecentPlaces,
+  customPlaces = [],
+  step = 'basic',
+  setStep,
+  roundDraft,
+  setRoundDraft
+}) {
   const [error, setError] = useState('');
+  const round = roundDraft || createInitialRoundDraft();
+  const province = round.province || '전라남도';
+  const updateRound = (patch) => setRoundDraft(prev => ({ ...(prev || createInitialRoundDraft()), ...patch }));
+
+  React.useEffect(() => {
+    if (!roundDraft) setRoundDraft(createInitialRoundDraft());
+  }, [roundDraft, setRoundDraft]);
 
   const customPlaceNames = customPlaces
     .filter(place => !place.province || place.province === province)
@@ -1652,32 +1890,36 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces,
     .sort((a, b) => a - b);
   const manualHiddenPar = manualHiddenIndexes.reduce((sum, index) => sum + Number(holePars[index] || 0), 0);
   const targetHiddenPar = totalPar * 2 / 3;
+  const parStatuses = getCourseParStatuses(round.holePars, round.holes);
+  const parValidationMessage = getParValidationMessage(round.holePars, round.holes);
 
   const changeHoleCount = (holes) => {
-    setLocalRound(prev => ({
-      ...prev,
+    setRoundDraft(prev => ({
+      ...(prev || createInitialRoundDraft()),
       holes,
-      holePars: createDefaultHolePars(holes, prev.holePars),
-      manualHiddenHoleIndexes: (prev.manualHiddenHoleIndexes || []).filter(index => index < holes)
+      holePars: createDefaultHolePars(holes, prev?.holePars),
+      manualHiddenHoleIndexes: (prev?.manualHiddenHoleIndexes || []).filter(index => index < holes)
     }));
   };
 
   const updateHolePar = (index, value) => {
-    setLocalRound(prev => {
-      const nextHolePars = [...(prev.holePars || createDefaultHolePars(prev.holes))];
+    setRoundDraft(prev => {
+      const draft = prev || createInitialRoundDraft();
+      const nextHolePars = [...(draft.holePars || createDefaultHolePars(draft.holes))];
       const digits = String(value || '').replace(/\D/g, '').slice(0, 2);
       nextHolePars[index] = digits;
-      return { ...prev, holePars: nextHolePars };
+      return { ...draft, holePars: nextHolePars };
     });
   };
 
   const toggleManualHiddenHole = (index) => {
-    setLocalRound(prev => {
-      const selected = new Set(prev.manualHiddenHoleIndexes || []);
+    setRoundDraft(prev => {
+      const draft = prev || createInitialRoundDraft();
+      const selected = new Set(draft.manualHiddenHoleIndexes || []);
       if (selected.has(index)) selected.delete(index);
       else selected.add(index);
       return {
-        ...prev,
+        ...draft,
         manualHiddenHoleIndexes: [...selected].sort((a, b) => a - b)
       };
     });
@@ -1697,7 +1939,6 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces,
     if (round.place.trim()) setRecentPlaces(prev => [round.place.trim(), ...prev.filter(p => p !== round.place.trim())].slice(0, 10));
     const { normalizedPars: normalizedHolePars, message: parError } = findCourseParIssues(round.holePars, round.holes);
     if (parError) {
-      alert(parError);
       return setError(parError);
     }
     let hiddenHoleIndexes = [];
@@ -1732,8 +1973,14 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces,
     setScreen('memberSelect');
   };
 
+  const roundSteps = [
+    { id: 'basic', label: '기본 정보', icon: CalendarDays },
+    { id: 'settings', label: '경기 설정', icon: Trophy }
+  ];
+
   return (
     <main className="page round-page">
+      <StepProgress steps={roundSteps} current={step} onSelect={(nextStep) => { setError(''); setStep(nextStep); }} />
       <header className="topbar">
         <h1>라운딩 생성</h1>
         <p>{step === 'basic' ? '라운딩 기본 정보를 입력하세요.' : '경기 방식과 코스별 기준파를 설정하세요.'}</p>
@@ -1743,18 +1990,18 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces,
         {step === 'basic' && (
           <Card title="라운딩 기본 정보" icon={CalendarDays}>
             <div className="form-grid single">
-              <Field label="라운딩 제목" required><input value={round.title} onChange={e => setLocalRound({ ...round, title: e.target.value })} /></Field>
-              <Field label="날짜" required><input type="date" value={round.date} onChange={e => setLocalRound({ ...round, date: e.target.value })} /></Field>
+              <Field label="라운딩 제목" required><input value={round.title} onChange={e => updateRound({ title: e.target.value })} /></Field>
+              <Field label="날짜" required><input type="date" value={round.date} onChange={e => updateRound({ date: e.target.value })} /></Field>
               <Field label="행정구역">
-                <select value={province} onChange={e => { setProvince(e.target.value); setLocalRound({ ...round, place: PARK_GOLF_PLACES[e.target.value]?.[0] || '' }); }}>
+                <select value={province} onChange={e => updateRound({ province: e.target.value, place: PARK_GOLF_PLACES[e.target.value]?.[0] || '' })}>
                   {PROVINCES.map(p => <option key={p}>{p}</option>)}
                 </select>
               </Field>
               <Field label="파크골프장 선택 또는 직접 입력">
-                <input list="places" value={round.place} onChange={e => setLocalRound({ ...round, place: e.target.value })} />
+                <input list="places" value={round.place} onChange={e => updateRound({ place: e.target.value })} />
                 <datalist id="places">{places.map(p => <option key={p} value={p} />)}</datalist>
               </Field>
-              <Field label="메모"><textarea value={round.memo} onChange={e => setLocalRound({ ...round, memo: e.target.value })} rows={2} /></Field>
+              <Field label="메모"><textarea value={round.memo} onChange={e => updateRound({ memo: e.target.value })} rows={2} /></Field>
             </div>
           </Card>
         )}
@@ -1766,33 +2013,20 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces,
                 <div className="chip-row">{HOLE_OPTIONS.map(h => <button key={h} className={round.holes === h ? 'chip active' : 'chip'} onClick={() => changeHoleCount(h)}>{h}홀</button>)}</div>
               </Field>
               <Field label="점수/경기 방식">
-                <select value={round.method} onChange={e => setLocalRound({ ...round, method: e.target.value })}>
+                <select value={round.method} onChange={e => updateRound({ method: e.target.value })}>
                   {GAME_METHODS.map(m => <option key={m}>{m}</option>)}
                 </select>
               </Field>
               <div className="field">
-                <span>코스별 규정타수 · 전체 기준파 {totalPar}</span>
-                <div className="course-input-list">
-                  {getCourseGroups(holePars).map(course => (
-                    <section className="course-input-card compact-course-card" key={course.label}>
-                      <h3>{course.label} <small>기준파 {sumNumbers(course.holes.map(hole => hole.value))}/36</small></h3>
-                      <div className="par-grid compact-par-grid">
-                        {course.holes.map(hole => (
-                          <label key={hole.index}>
-                            <span>{hole.number}홀</span>
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              pattern="[0-9]*"
-                              value={round.holePars?.[hole.index] ?? hole.value}
-                              onFocus={event => event.target.select()}
-                              onChange={e => updateHolePar(hole.index, e.target.value)}
-                            />
-                          </label>
-                        ))}
-                      </div>
-                    </section>
-                  ))}
+                <span>코스별 기준파 · 전체 기준파 {totalPar}</span>
+                <CourseParEditor
+                  holePars={holePars}
+                  rawPars={round.holePars}
+                  updateHolePar={updateHolePar}
+                  statuses={parStatuses}
+                />
+                <div className={parValidationMessage ? 'inline-validation error' : 'inline-validation ok'}>
+                  {parValidationMessage || '모든 코스 기준파 합계가 36타입니다.'}
                 </div>
               </div>
             </Card>
@@ -1804,12 +2038,12 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces,
           >
             <Field label="선정 방식">
               <div className="chip-row">
-                <button className={round.hiddenHoleMode === 'auto' ? 'chip active' : 'chip'} onClick={() => setLocalRound({ ...round, hiddenHoleMode: 'auto' })}>자동 선정</button>
-                <button className={round.hiddenHoleMode === 'manual' ? 'chip active' : 'chip'} onClick={() => setLocalRound({ ...round, hiddenHoleMode: 'manual' })}>직접 선택</button>
+                <button className={round.hiddenHoleMode === 'auto' ? 'chip active' : 'chip'} onClick={() => updateRound({ hiddenHoleMode: 'auto' })}>자동 선정</button>
+                <button className={round.hiddenHoleMode === 'manual' ? 'chip active' : 'chip'} onClick={() => updateRound({ hiddenHoleMode: 'manual' })}>직접 선택</button>
               </div>
             </Field>
             <label className="check">
-              <input type="checkbox" checked={round.showHiddenHoles !== false} onChange={e => setLocalRound({ ...round, showHiddenHoles: e.target.checked })} />
+              <input type="checkbox" checked={round.showHiddenHoles !== false} onChange={e => updateRound({ showHiddenHoles: e.target.checked })} />
               순위표와 기록에서 숨김 홀 공개
             </label>
             {round.hiddenHoleMode === 'manual' && (
@@ -1844,8 +2078,9 @@ function RoundCreateScreen({ setScreen, setRound, recentPlaces, setRecentPlaces,
 
       {error && <p className="error">{error}</p>}
       <div className="sticky-action-bar">
-        {step === 'settings' && <Button variant="secondary" onClick={() => { setError(''); setStep('basic'); }}>기본 정보 수정</Button>}
-        <Button onClick={step === 'basic' ? goSettings : submit}>{step === 'basic' ? '경기 설정으로 이동' : '참가자 선택으로 이동'}</Button>
+        <Button disabled={step === 'settings' && Boolean(parValidationMessage)} onClick={step === 'basic' ? goSettings : submit}>
+          {step === 'basic' ? '경기 설정으로 이동' : '참가자 선택으로 이동'}
+        </Button>
       </div>
     </main>
   );
@@ -1861,11 +2096,12 @@ function MemberSelectScreen({
   teamSize,
   round,
   teamAssignmentMode,
-  setTeamAssignmentMode
+  setTeamAssignmentMode,
+  step = 'members',
+  setStep
 }) {
   const [selected, setSelected] = useState([]);
   const [leaders, setLocalLeaders] = useState([]);
-  const [step, setStep] = useState('members');
   const [customGroups, setCustomGroups] = useState({});
   const assignmentOptions = useMemo(() => getAssignmentOptions(round?.method), [round?.method]);
   const defaultAssignmentMode = getDefaultAssignmentMode(round?.method);
@@ -1920,8 +2156,19 @@ function MemberSelectScreen({
     setScreen('teamResult');
   };
 
+  const memberSelectSteps = [
+    { id: 'members', label: '참가자', icon: Users },
+    { id: 'mode', label: '편성 방식', icon: Shuffle },
+    ...(isTeamMatch ? [] : [{ id: 'size', label: isCustomAssignment ? '조 입력' : '조 인원', icon: Trophy }])
+  ];
+  const currentStepIndex = Math.max(0, memberSelectSteps.findIndex(item => item.id === step));
+
   return (
     <main className="page">
+      <StepProgress steps={memberSelectSteps} current={step} onSelect={(nextStep) => {
+        const nextIndex = memberSelectSteps.findIndex(item => item.id === nextStep);
+        if (nextIndex <= currentStepIndex) setStep(nextStep);
+      }} />
       <header className="topbar"><h1>참가자 선택</h1><p>{round?.title} · {round?.date} · {round?.place}</p></header>
       {step === 'members' && (
         <Card title={`참가자 선택 · ${selectedMembers.length}명`} subtitle="참가할 회원과 조장을 선택하세요. 조장은 후보가 아니어도 선택할 수 있습니다." icon={Users}>
@@ -1986,7 +2233,6 @@ function MemberSelectScreen({
       )}
 
       <div className="sticky-action-bar">
-        {step !== 'members' && <Button variant="secondary" onClick={() => setStep(step === 'size' ? 'mode' : 'members')}>{step === 'size' ? '편성 방식 수정' : '참가자 수정'}</Button>}
         {step === 'members' && <Button onClick={goModeStep}>편성 방식 선택</Button>}
         {step === 'mode' && <Button onClick={goFinalStep}>{isTeamMatch ? '조편성하기' : '조당 인원 선택'}</Button>}
         {step === 'size' && <Button onClick={next}>조편성하기</Button>}
@@ -2104,8 +2350,9 @@ function TeamResultScreen({
 function ScoreInputScreen({ setScreen, participants, round, teams, scores, setScores, activeRecordId }) {
   const holePars = useMemo(() => getRoundHolePars(round), [round]);
   const scoreEntries = useMemo(() => getScoreEntries(participants, teams, round), [participants, teams, round]);
-  const courseGroups = useMemo(() => getCourseGroups(holePars), [holePars]);
   const [activeEntryId, setActiveEntryId] = useState(scoreEntries[0]?.id || '');
+  const [activeCourseIndex, setActiveCourseIndex] = useState(0);
+  const [compactScoreGrid, setCompactScoreGrid] = useState(false);
   const activeEntry = scoreEntries.find(entry => entry.id === activeEntryId) || scoreEntries[0];
   const rankings = calculateRankings(scoreEntries, scores, round);
   const totalPar = sumNumbers(holePars);
@@ -2133,7 +2380,7 @@ function ScoreInputScreen({ setScreen, participants, round, teams, scores, setSc
     const nextValue = Math.max(1, Math.min(15, Number(value || 0)));
     setScores(prev => ({
       ...prev,
-      [entryId]: (prev[entryId] || []).map((v, i) => i === index ? nextValue : v)
+      [entryId]: (prev[entryId] || holePars).map((v, i) => i === index ? nextValue : v)
     }));
   };
 
@@ -2175,39 +2422,15 @@ function ScoreInputScreen({ setScreen, participants, round, teams, scores, setSc
             <div><span>파 이하</span><strong>{activeMeta.parSaveRate}%</strong></div>
             <div><span>버디</span><strong>{activeMeta.birdieCount}</strong></div>
           </div>
-          <div className="course-input-list sporty-score-list">
-            {courseGroups.map(course => (
-              <section className="course-input-card sporty-course-card" key={`${activeEntry.id}-${course.label}`}>
-                <h3>{course.label}</h3>
-                <div className="score-grid sporty-score-grid">
-                  {course.holes.map(hole => {
-                    const value = activeScores[hole.index] ?? hole.value;
-                    const diff = Number(value) - Number(hole.value);
-                    return (
-                      <div key={hole.index} className={`score-cell ${getScoreDiffClass(diff)}`}>
-                        <span className="hole-label">{hole.number}홀</span>
-                        <small>파 {hole.value}</small>
-                        <input
-                          className="score-direct-input"
-                          type="text"
-                          inputMode="numeric"
-                          pattern="[0-9]*"
-                          value={value}
-                          onFocus={event => event.target.select()}
-                          onChange={event => updateScore(activeEntry.id, hole.index, event.target.value)}
-                        />
-                        <em>{formatScoreDiff(diff, 0)}</em>
-                        <div className="score-stepper">
-                          <button onClick={() => updateScore(activeEntry.id, hole.index, Number(value) - 1)} aria-label={`${hole.number}홀 점수 낮추기`}>−</button>
-                          <button onClick={() => updateScore(activeEntry.id, hole.index, Number(value) + 1)} aria-label={`${hole.number}홀 점수 높이기`}>+</button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
-            ))}
-          </div>
+          <ScoreGridEditor
+            holePars={holePars}
+            scores={activeScores}
+            onScoreChange={(index, value) => updateScore(activeEntry.id, index, value)}
+            activeCourseIndex={activeCourseIndex}
+            setActiveCourseIndex={setActiveCourseIndex}
+            compact={compactScoreGrid}
+            setCompact={setCompactScoreGrid}
+          />
         </Card>
       )}
 
@@ -2387,22 +2610,18 @@ function SharedScoreSelectScreen({ records, recordId, setSharedEntryId, setScree
   );
 }
 
-function SharedScoreScreen({ records, setRecords, recordId, entryId, setScreen }) {
+function SharedScoreScreen({ records, setRecords, recordId, entryId, setSharedEntryId, setScreen }) {
   const record = records.find(item => item.id === recordId);
   const entries = useMemo(() => record ? getScoreEntries(record.participants || [], record.teams || [], record.round || {}) : [], [record]);
   const entry = entries.find(item => item.id === entryId);
   const holePars = useMemo(() => getRoundHolePars(record?.round), [record]);
-  const courseGroups = useMemo(() => getCourseGroups(holePars), [holePars]);
   const [localScores, setLocalScores] = useState(() => getInitialEntryScores(record, entryId));
   const [activeCourseIndex, setActiveCourseIndex] = useState(0);
+  const [compactScoreGrid, setCompactScoreGrid] = useState(false);
 
   React.useEffect(() => {
     setLocalScores(getInitialEntryScores(record, entryId));
   }, [record?.id, entryId]);
-
-  React.useEffect(() => {
-    if (activeCourseIndex >= courseGroups.length) setActiveCourseIndex(0);
-  }, [activeCourseIndex, courseGroups.length]);
 
   if (!record || !entry) {
     return (
@@ -2414,8 +2633,6 @@ function SharedScoreScreen({ records, setRecords, recordId, entryId, setScreen }
       </main>
     );
   }
-
-  const selectedCourse = courseGroups[activeCourseIndex] || courseGroups[0];
 
   const persistSharedScores = (nextEntryScores, showAlert = false) => {
     setRecords(prev => prev.map(item => {
@@ -2440,7 +2657,7 @@ function SharedScoreScreen({ records, setRecords, recordId, entryId, setScreen }
   };
 
   const updateScore = (index, value) => {
-    const nextValue = Math.max(0, Number(value || 0));
+    const nextValue = Math.max(1, Math.min(15, Number(value || 0)));
     setLocalScores(prev => {
       const nextScores = prev.map((score, scoreIndex) => scoreIndex === index ? nextValue : score);
       persistSharedScores(nextScores);
@@ -2469,48 +2686,28 @@ function SharedScoreScreen({ records, setRecords, recordId, entryId, setScreen }
         <span>코스 탭을 바꿔도 입력값은 유지되고, 순위는 자동으로 갱신됩니다.</span>
       </section>
 
-      <Card title={entry.name} subtitle={`${getScoreEntrySubtitle(entry)} · 현재 총타수 ${sumNumbers(localScores)}`}>
-        <div className="course-tabs" role="tablist" aria-label="코스 선택">
-          {courseGroups.map((course, index) => (
-            <button
-              key={course.label}
-              className={activeCourseIndex === index ? 'course-tab active' : 'course-tab'}
-              role="tab"
-              aria-selected={activeCourseIndex === index}
-              onClick={() => setActiveCourseIndex(index)}
-            >
-              <strong>{course.label}</strong>
-              <span>1~9홀</span>
+      <div className="player-strip" aria-label="조 또는 입력 대상 선택">
+        {entries.map(item => {
+          const meta = getEntryScoreMeta(record.scores?.[item.id] || [], holePars);
+          return (
+            <button key={item.id} className={entry.id === item.id ? 'player-pill active' : 'player-pill'} onClick={() => setSharedEntryId(item.id)}>
+              <strong>{item.name}</strong>
+              <span className={getScoreDiffClass(meta.diff)}>{formatScoreDiff(meta.diff)}</span>
             </button>
-          ))}
-        </div>
-        {selectedCourse && (
-          <section className="shared-score-table-card">
-            <div className="shared-score-table-title">
-              <strong>{selectedCourse.label}</strong>
-              <span>{selectedCourse.holes.map(hole => localScores[hole.index] ?? hole.value).reduce((sum, score) => sum + Number(score || 0), 0)}타</span>
-            </div>
-            <div className="score-hole-table" role="table" aria-label={`${selectedCourse.label} 홀별 점수표`}>
-              {selectedCourse.holes.map(hole => {
-                const scoreValue = Number(localScores[hole.index] ?? hole.value);
-                return (
-                  <label className={`score-cell shared-score-cell ${getScoreDiffClass(scoreValue - Number(hole.value || 0))}`} key={hole.index}>
-                    <span className="hole-label">{hole.number}홀</span>
-                    <small>파 {hole.value}</small>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      min="0"
-                      value={localScores[hole.index] ?? hole.value}
-                      onChange={event => updateScore(hole.index, event.target.value)}
-                    />
-                  </label>
-                );
-              })}
-            </div>
-          </section>
-        )}
+          );
+        })}
+      </div>
+
+      <Card title={entry.name} subtitle={`${getScoreEntrySubtitle(entry)} · 현재 총타수 ${sumNumbers(localScores)}`}>
+        <ScoreGridEditor
+          holePars={holePars}
+          scores={localScores}
+          onScoreChange={updateScore}
+          activeCourseIndex={activeCourseIndex}
+          setActiveCourseIndex={setActiveCourseIndex}
+          compact={compactScoreGrid}
+          setCompact={setCompactScoreGrid}
+        />
         <div className="button-row">
           <Button icon={Save} onClick={saveSharedScores}>점수 저장</Button>
           <Button variant="secondary" onClick={() => setScreen('sharedScoreSelect')}>대상 다시 선택</Button>
@@ -2530,7 +2727,7 @@ function SharedScoreScreen({ records, setRecords, recordId, entryId, setScreen }
   );
 }
 
-function RecordScreen({ records, setRecords, onScoreInput }) {
+function RecordScreen({ records, setRecords, onScoreInput, onDeleteRecord }) {
   const [expandedRecordId, setExpandedRecordId] = useState(null);
   const [query, setQuery] = useState('');
   const filteredRecords = useMemo(() => {
@@ -2561,12 +2758,13 @@ function RecordScreen({ records, setRecords, onScoreInput }) {
 
   const deleteRecord = (record) => {
     if (!confirm(`${record.round.title} 기록을 삭제할까요?`)) return;
-    setRecords(prev => prev.filter(item => item.id !== record.id));
+    if (onDeleteRecord) onDeleteRecord(record);
+    else setRecords(prev => prev.filter(item => item.id !== record.id));
   };
 
-  const exportRecord = (record) => {
+  const exportRecord = async (record) => {
     const filename = `${createSafeFilename(record.round.title)}_${record.round.date || 'date'}.csv`;
-    downloadTextFile(filename, buildRecordCsv(record), 'text/csv;charset=utf-8');
+    await downloadTextFile(filename, buildRecordCsv(record), 'text/csv;charset=utf-8');
   };
 
   const shareRound = async (record) => {
@@ -2775,12 +2973,26 @@ function App() {
   const [records, setRecords] = useState([]);
   const [recentPlaces, setRecentPlaces] = useState(DEFAULT_RECENT_PLACES);
   const [customPlaces, setCustomPlaces] = useState([]);
+  const [roundCreateStep, setRoundCreateStep] = useState('basic');
+  const [roundDraft, setRoundDraft] = useState(() => createInitialRoundDraft());
+  const [memberSelectStep, setMemberSelectStep] = useState('members');
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [isSupabaseReady, setIsSupabaseReady] = useState(false);
   const screenRef = React.useRef('home');
+  const deletedRecordIdsRef = React.useRef(new Set());
   const memberStats = useMemo(() => buildMemberStatsFromRecords(records), [records]);
   const previousRoundTeams = useMemo(() => records.find(record => record.teams?.length)?.teams || [], [records]);
   const sharedLinkHandledRef = React.useRef(false);
+
+  const getVisibleRecords = (items = []) => (
+    getStoredArray(items, []).filter(record => !deletedRecordIdsRef.current.has(record.id))
+  );
+
+  const deleteRecordById = (record) => {
+    if (!record?.id) return;
+    deletedRecordIdsRef.current.add(record.id);
+    setRecords(prev => prev.filter(item => item.id !== record.id));
+  };
 
   React.useEffect(() => {
     screenRef.current = screen;
@@ -2794,6 +3006,12 @@ function App() {
       const nextScreen = event.state?.app === 'parkbuddy' && event.state?.screen
         ? event.state.screen
         : 'home';
+      if (nextScreen === 'roundCreate') {
+        setRoundCreateStep(event.state?.roundCreateStep || 'basic');
+      }
+      if (nextScreen === 'memberSelect') {
+        setMemberSelectStep(event.state?.memberSelectStep || 'members');
+      }
       screenRef.current = nextScreen;
       setScreen(nextScreen);
     };
@@ -2811,7 +3029,7 @@ function App() {
 
         if (data) {
           setMembers(getStoredArray(data.members, initialMembers));
-          setRecords(getStoredArray(data.records, []));
+          setRecords(getVisibleRecords(data.records));
           setRecentPlaces(getStoredArray(data.recentPlaces, DEFAULT_RECENT_PLACES));
           setCustomPlaces(getStoredArray(data.customPlaces, []));
         }
@@ -2870,7 +3088,7 @@ function App() {
         .then(({ data }) => {
           if (!data) return;
           setMembers(getStoredArray(data.members, initialMembers));
-          setRecords(getStoredArray(data.records, []));
+          setRecords(getVisibleRecords(data.records));
           setRecentPlaces(getStoredArray(data.recentPlaces, DEFAULT_RECENT_PLACES));
           setCustomPlaces(getStoredArray(data.customPlaces, []));
         })
@@ -2882,12 +3100,44 @@ function App() {
     return () => window.clearInterval(intervalId);
   }, [isDataLoaded, isSupabaseReady, screen]);
 
+  const pushScreenState = (next, extras = {}) => {
+    window.history.pushState({ app: 'parkbuddy', screen: next, ...extras }, '', window.location.pathname);
+  };
+
+  const goRoundCreateStep = (nextStep) => {
+    setRoundCreateStep(nextStep);
+    screenRef.current = 'roundCreate';
+    pushScreenState('roundCreate', { roundCreateStep: nextStep });
+    setScreen('roundCreate');
+  };
+
+  const goMemberSelectStep = (nextStep) => {
+    setMemberSelectStep(nextStep);
+    screenRef.current = 'memberSelect';
+    pushScreenState('memberSelect', { memberSelectStep: nextStep });
+    setScreen('memberSelect');
+  };
+
   const navigate = (next) => {
     if (next === 'teamResult') setTeams([]);
-    if (next === 'roundCreate') { setScores({}); setTeams([]); setTeamAssignmentMode(null); setActiveRecordId(null); setSharedEntryId(null); }
+    const extras = {};
+    if (next === 'roundCreate') {
+      setScores({});
+      setTeams([]);
+      setTeamAssignmentMode(null);
+      setActiveRecordId(null);
+      setSharedEntryId(null);
+      setRoundCreateStep('basic');
+      setRoundDraft(createInitialRoundDraft());
+      extras.roundCreateStep = 'basic';
+    }
+    if (next === 'memberSelect') {
+      setMemberSelectStep('members');
+      extras.memberSelectStep = 'members';
+    }
     if (screenRef.current === next) return;
     screenRef.current = next;
-    window.history.pushState({ app: 'parkbuddy', screen: next }, '', window.location.pathname);
+    pushScreenState(next, extras);
     setScreen(next);
   };
 
@@ -2923,16 +3173,16 @@ function App() {
     <>
       {screen === 'home' && <HomeScreen setScreen={navigate} members={members} records={records} />}
       {screen === 'members' && <MemberScreen members={members} memberStats={memberStats} setMembers={setMembers} />}
-      {screen === 'roundCreate' && <RoundCreateScreen setScreen={navigate} setRound={setRound} recentPlaces={recentPlaces} setRecentPlaces={setRecentPlaces} customPlaces={customPlaces} />}
+      {screen === 'roundCreate' && <RoundCreateScreen setScreen={navigate} setRound={setRound} recentPlaces={recentPlaces} setRecentPlaces={setRecentPlaces} customPlaces={customPlaces} step={roundCreateStep} setStep={goRoundCreateStep} roundDraft={roundDraft} setRoundDraft={setRoundDraft} />}
       {screen === 'personalScores' && <PersonalScoreScreen members={members} records={records} />}
       {screen === 'courses' && <CourseManageScreen customPlaces={customPlaces} setCustomPlaces={setCustomPlaces} />}
-      {screen === 'memberSelect' && <MemberSelectScreen setScreen={navigate} members={members} memberStats={memberStats} setParticipants={setParticipants} setLeaders={setLeaders} setTeamSize={setTeamSize} teamSize={teamSize} round={round} teamAssignmentMode={teamAssignmentMode} setTeamAssignmentMode={setTeamAssignmentMode} />}
+      {screen === 'memberSelect' && <MemberSelectScreen setScreen={navigate} members={members} memberStats={memberStats} setParticipants={setParticipants} setLeaders={setLeaders} setTeamSize={setTeamSize} teamSize={teamSize} round={round} teamAssignmentMode={teamAssignmentMode} setTeamAssignmentMode={setTeamAssignmentMode} step={memberSelectStep} setStep={goMemberSelectStep} />}
       {screen === 'teamResult' && <TeamResultScreen setScreen={navigate} participants={participants} leaders={leaders} teamSize={teamSize} teams={teams} setTeams={setTeams} setRecords={setRecords} round={round} assignmentMode={teamAssignmentMode || getDefaultAssignmentMode(round?.method)} memberStats={memberStats} previousRoundTeams={previousRoundTeams} />}
       {screen === 'scoreInput' && <ScoreInputScreen setScreen={navigate} participants={participants} teams={teams} round={round} scores={scores} setScores={setScores} activeRecordId={activeRecordId} />}
       {screen === 'ranking' && <RankingScreen setScreen={navigate} participants={participants} scores={scores} round={round} teams={teams} assignmentMode={teamAssignmentMode || getDefaultAssignmentMode(round?.method)} records={records} setRecords={setRecords} activeRecordId={activeRecordId} />}
       {screen === 'sharedScoreSelect' && <SharedScoreSelectScreen records={records} recordId={activeRecordId} setSharedEntryId={setSharedEntryId} setScreen={setScreen} />}
-      {screen === 'sharedScore' && <SharedScoreScreen records={records} setRecords={setRecords} recordId={activeRecordId} entryId={sharedEntryId} setScreen={setScreen} />}
-      {screen === 'records' && <RecordScreen records={records} setRecords={setRecords} onScoreInput={startRecordScoreInput} />}
+      {screen === 'sharedScore' && <SharedScoreScreen records={records} setRecords={setRecords} recordId={activeRecordId} entryId={sharedEntryId} setSharedEntryId={setSharedEntryId} setScreen={setScreen} />}
+      {screen === 'records' && <RecordScreen records={records} setRecords={setRecords} onScoreInput={startRecordScoreInput} onDeleteRecord={deleteRecordById} />}
     </>
   );
 }
